@@ -85,6 +85,9 @@ type Consensus struct {
 	// Blocks eleminated from consideration
 	eliminated []spec.Block
 
+	// Function to be called when block is confirmed (removed as an old block)
+	onBlockConfirmed spec.BlockConfirmedHandler
+
 	// Stats of the consensus system
 	Stats *stats.ConsensusStats
 }
@@ -92,7 +95,7 @@ type Consensus struct {
 // NewConsensus constructs a new Consensus instance with the specified Depth
 // and blockComparator function. If Depth is 0 then DefaultDepth is
 // used. If blockComparator is nil then DefaultBlockComparator is used.
-func NewConsensus(consensusSpec spec.ConsensusSpec, competitionSpec spec.CompetitionSpec) *Consensus {
+func New(consensusSpec spec.ConsensusSpec, competitionSpec spec.CompetitionSpec) *Consensus {
 	if consensusSpec == nil {
 		panic(errors.New("consensusSpec must be provided"))
 	}
@@ -207,6 +210,10 @@ func (c *Consensus) AddBlock(block spec.Block) (added bool) {
 	go c.Stats.AddBlock(block)
 
 	return true
+}
+
+func (c *Consensus) OnBlockConfirmed(f spec.BlockConfirmedHandler) {
+	c.onBlockConfirmed = f
 }
 
 // GetBestBranch returns the most favorable branch for the client program to
@@ -442,20 +449,30 @@ func (c *Consensus) removeHead(blockID string) {
 
 func (c *Consensus) removeOldBlocks() {
 	maxBlockNumber := c.getMaxBlockNumber()
-	removeIDs := make([]string, 0)
+	confirmedIDs := make([]string, 0)
 	for blockID, block := range c.blocks {
-		if c.ConsensusSpec.ShouldRemoveBlock(block, maxBlockNumber) {
-			removeIDs = append(removeIDs, blockID)
+		if c.ConsensusSpec.IsBlockConfirmed(block, maxBlockNumber) {
+			confirmedIDs = append(confirmedIDs, blockID)
 		}
 	}
-	for _, blockID := range removeIDs {
+	if len(confirmedIDs) > 1 {
+		// TODO: we should have reached consensus, need to figure out logging 
+		// or should we alert the client program 
+		// or should we not emit any events and wait for to problem to resolve by receiving more blocks?
+		// or its possible that a fork was resolved and now we have to confirm several blocks in a row
+	}
+	for _, blockID := range confirmedIDs {
+		if c.onBlockConfirmed != nil {
+			go c.onBlockConfirmed(c.blocks[blockID])
+		}
 		c.removeBlock(blockID)
 	}
 
-	maxBlockNumber--
+	depth := uint64(c.ConsensusSpec.GetDepth())
 	for i := 0; i < len(c.eliminated); i++ {
 		block := c.eliminated[i]
-		if c.ConsensusSpec.ShouldRemoveBlock(block, maxBlockNumber) {
+		blockNumber := block.GetBlockNumber()
+		if maxBlockNumber >= blockNumber && maxBlockNumber - blockNumber > depth {
 			go c.Stats.RemoveBlock(block)
 			c.eliminated = append(c.eliminated[:i], c.eliminated[i+1:]...)
 		}

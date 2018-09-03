@@ -9,5 +9,5 @@ import (
 
 func TestGoConsensus(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "GoConsensus Suite")
+	RunSpecs(t, "Consensus Suite")
 }

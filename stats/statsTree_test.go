@@ -8,6 +8,8 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
+	"github.com/blckit/go-consensus/mock"
 )
 
 var _ = Describe("StatsTree", func() {
@@ -64,7 +66,7 @@ var _ = Describe("StatsTree", func() {
 
 		It("adds new root to tree", func(done Done) {
 			t, _ := buildTree()
-			b0 := BlockMock{id: "000", parentID: "not_used", blockNumber: 4}
+			b0 := mock.NewBlock("000", "not_used", uint64(4))
 			t.add(b0)
 
 			t.OnFrameReady = func() {
@@ -162,7 +164,7 @@ var _ = Describe("StatsTree", func() {
 				sumFrameTimes += frameTime
 
 				blockID := strconv.FormatInt(int64(frameCount), 10)
-				b := BlockMock{id: blockID, parentID: "333", blockNumber: 8}
+				b := mock.NewBlock(blockID, "333", uint64(8))
 				t.add(b)
 
 				frameStart = time.Now().UnixNano()
@@ -207,7 +209,7 @@ var _ = Describe("StatsTree", func() {
 				}
 
 				blockID := strconv.FormatInt(int64(frameCount), 10)
-				b := BlockMock{id: blockID, parentID: "333", blockNumber: 8}
+				b := mock.NewBlock(blockID, "333", uint64(8))
 				t.add(b)
 
 				frameStart = time.Now().UnixNano()
@@ -220,19 +222,19 @@ var _ = Describe("StatsTree", func() {
 	})
 })
 
-func buildTree() (*StatsTree, map[string]BlockMock) {
+func buildTree() (*StatsTree, map[string]mock.Block) {
 	t := newStatsTree()
-	b1 := BlockMock{id: "111", parentID: "000", blockNumber: 5}
-	b2 := BlockMock{id: "222", parentID: "111", blockNumber: 6}
-	b3a := BlockMock{id: "331", parentID: "222", blockNumber: 7}
-	b3b := BlockMock{id: "332", parentID: "222", blockNumber: 7}
-	b3c := BlockMock{id: "333", parentID: "222", blockNumber: 7}
+	b1 := mock.NewBlock("111", "000", uint64(5))
+	b2 := mock.NewBlock("222", "111", uint64(6))
+	b3a := mock.NewBlock("331", "222", uint64(7))
+	b3b := mock.NewBlock("332", "222", uint64(7))
+	b3c := mock.NewBlock("333", "222", uint64(7))
 	t.add(b1)
 	t.add(b2)
 	t.add(b3a)
 	t.add(b3b)
 	t.add(b3c)
 
-	blocks := map[string]BlockMock{b1.id: b1, b2.id: b2, b3a.id: b3a, b3b.id: b3b, b3c.id: b3c}
+	blocks := map[string]mock.Block{b1.GetID(): b1, b2.GetID(): b2, b3a.GetID(): b3a, b3b.GetID(): b3b, b3c.GetID(): b3c}
 	return t, blocks
 }

@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	depthcons "github.com/blckit/go-consensus-depth"
+	mock "github.com/blckit/go-consensus/mock"
 )
 
 type BlockMock struct {
@@ -31,7 +32,7 @@ func (b BlockMock) GetBlockNumber() uint64 {
 
 var _ = Describe("Consensus", func() {
 
-	Describe("#NewConsensus", func() {
+	Describe("#New", func() {
 
 		It("creates instance with all args specified", func() {
 			var c *Consensus = GetInst()
@@ -45,13 +46,13 @@ var _ = Describe("Consensus", func() {
 
 		It("panics when args are nil", func() {
 			f := func() {
-				NewConsensus(nil, &depthcons.DepthCompetiton{})
+				New(nil, &depthcons.DepthCompetiton{})
 			}
 
 			Expect(f).To(Panic())
 
 			f = func() {
-				NewConsensus(&depthcons.DepthConsensus{}, nil)
+				New(&depthcons.DepthConsensus{}, nil)
 			}
 
 			Expect(f).To(Panic())
@@ -62,13 +63,13 @@ var _ = Describe("Consensus", func() {
 
 		It("returns false if parent does not exist", func() {
 			c := GetInst()
-			b := BlockMock{id: "abc", parentID: "parent123"}
+			b := mock.NewBlock("abc", "parent123", uint64(0))
 			Expect(c.WasSeen(b)).To(BeFalse())
 		})
 
 		It("returns true if block is in seen array", func() {
 			c := GetInst()
-			b := BlockMock{id: "abc", parentID: "parent123"}
+			b := mock.NewBlock("abc", "parent123", uint64(0))
 			c.alreadySeen["parent123"] = []string{"abc"}
 
 			Expect(c.WasSeen(b)).To(BeTrue())
@@ -79,16 +80,16 @@ var _ = Describe("Consensus", func() {
 
 		It("does nothing if block is not being tracked", func() {
 			c := GetInst()
-			c.SetCompeted(BlockMock{id: "parent123"})
+			c.SetCompeted(mock.NewBlock("parent123", "grandparent123", uint64(0)))
 
 			Expect(len(c.competed)).To(Equal(0))
 		})
 
 		It("adds block ID to array", func() {
 			c := GetInst()
-			b := BlockMock{id: "parent123", parentID: "parent456"}
+			b := mock.NewBlock("parent123", "parent456", uint64(0))
 			c.blocks["parent123"] = b
-			c.SetCompeted(BlockMock{id: "parent123"})
+			c.SetCompeted(mock.NewBlock("parent123", "grandparent123", uint64(0)))
 
 			Expect(c.competed[0]).To(Equal("parent123"))
 		})
@@ -98,7 +99,7 @@ var _ = Describe("Consensus", func() {
 
 		It("adds genesis block", func() {
 			c := GetInst()
-			b := BlockMock{id: "genesis", parentID: "222", blockNumber: 0}
+			b := mock.NewBlock("genesis", "222", uint64(0))
 			ok := c.AddBlock(b)
 
 			Expect(ok).To(BeTrue())
@@ -109,7 +110,7 @@ var _ = Describe("Consensus", func() {
 
 		It("does not add same block twice", func() {
 			c := GetInst()
-			b := BlockMock{id: "genesis", parentID: "222", blockNumber: 0}
+			b := mock.NewBlock("genesis", "222", uint64(0))
 			ok := c.AddBlock(b)
 			Expect(ok).To(BeTrue())
 
@@ -119,8 +120,8 @@ var _ = Describe("Consensus", func() {
 
 		It("removes parent as head and sets new block as head", func() {
 			c := GetInst()
-			b1 := BlockMock{id: "genesis", parentID: "", blockNumber: 0}
-			b2 := BlockMock{id: "111", parentID: "genesis", blockNumber: 1}
+			b1 := mock.NewBlock("genesis", "", uint64(0))
+			b2 := mock.NewBlock("111", "genesis", uint64(1))
 
 			c.AddBlock(b1)
 			Expect(c.heads).To(ContainElement("genesis"))
@@ -132,19 +133,19 @@ var _ = Describe("Consensus", func() {
 
 		It("removes unfavorable siblings", func() {
 			c := GetInst()
-			b1 := BlockMock{id: "genesis", parentID: "", blockNumber: 0}
-			b2a := BlockMock{id: "111a", parentID: "genesis", blockNumber: 1}
+			b1 := mock.NewBlock("genesis", "", uint64(0))
+			b2a := mock.NewBlock("111a", "genesis", uint64(1))
 			c.AddBlock(b1)
 			c.AddBlock(b2a)
 
-			b3b := BlockMock{id: "222b", parentID: "111b", blockNumber: 2}
-			b4b := BlockMock{id: "333b", parentID: "222b", blockNumber: 3}
-			b5b := BlockMock{id: "444b", parentID: "333b", blockNumber: 4}
+			b3b := mock.NewBlock("222b", "111b", uint64(2))
+			b4b := mock.NewBlock("333b", "222b", uint64(3))
+			b5b := mock.NewBlock("444b", "333b", uint64(4))
 			c.AddBlock(b3b)
 			c.AddBlock(b4b)
 			c.AddBlock(b5b)
 
-			b2b := BlockMock{id: "111b", parentID: "genesis", blockNumber: 1}
+			b2b := mock.NewBlock("111b", "genesis", uint64(1))
 			c.AddBlock(b2b)
 
 			Expect(c.blocks["111a"]).To(BeNil())
@@ -159,12 +160,12 @@ var _ = Describe("Consensus", func() {
 
 		It("does not add block if sibling is more favorable", func() {
 			c := GetInst()
-			b1 := BlockMock{id: "genesis", parentID: "", blockNumber: 0}
-			b2a := BlockMock{id: "111a", parentID: "genesis", blockNumber: 1}
-			b3a := BlockMock{id: "222a", parentID: "111a", blockNumber: 2}
-			b4a := BlockMock{id: "333a", parentID: "222a", blockNumber: 3}
-			b5a := BlockMock{id: "444a", parentID: "333a", blockNumber: 4}
-			b2b := BlockMock{id: "111b", parentID: "genesis", blockNumber: 1}
+			b1 := mock.NewBlock("genesis", "", uint64(0))
+			b2a := mock.NewBlock("111a", "genesis", uint64(1))
+			b3a := mock.NewBlock("222a", "111a", uint64(2))
+			b4a := mock.NewBlock("333a", "222a", uint64(3))
+			b5a := mock.NewBlock("444a", "333a", uint64(4))
+			b2b := mock.NewBlock("111b", "genesis", uint64(1))
 
 			c.AddBlock(b1)
 			c.AddBlock(b2a)
@@ -185,13 +186,13 @@ var _ = Describe("Consensus", func() {
 
 		It("keeps most favorable child branch", func() {
 			c := GetInst()
-			b1a := BlockMock{id: "111a", parentID: "zzz", blockNumber: 1}
+			b1a := mock.NewBlock("111a", "zzz", uint64(1))
 			c.AddBlock(b1a)
 
-			b1b := BlockMock{id: "111b", parentID: "zzz", blockNumber: 1}
-			b2b := BlockMock{id: "222b", parentID: "111b", blockNumber: 2}
-			b3b := BlockMock{id: "333b", parentID: "222b", blockNumber: 3}
-			b4b := BlockMock{id: "444b", parentID: "333b", blockNumber: 4}
+			b1b := mock.NewBlock("111b", "zzz", uint64(1))
+			b2b := mock.NewBlock("222b", "111b", uint64(2))
+			b3b := mock.NewBlock("333b", "222b", uint64(3))
+			b4b := mock.NewBlock("444b", "333b", uint64(4))
 			c.AddBlock(b1b)
 			c.AddBlock(b2b)
 			c.AddBlock(b3b)
@@ -201,7 +202,7 @@ var _ = Describe("Consensus", func() {
 			Expect(c.heads).To(ContainElement("111a"))
 			Expect(c.heads).To(ContainElement("444b"))
 
-			b0 := BlockMock{id: "zzz", parentID: "not_used", blockNumber: 0}
+			b0 := mock.NewBlock("zzz", "not_used", uint64(0))
 			c.AddBlock(b0)
 
 			Expect(len(c.blocks)).To(Equal(5))
@@ -224,8 +225,8 @@ var _ = Describe("Consensus", func() {
 
 		It("returns if head already competed", func() {
 			c := GetInst()
-			b1 := BlockMock{id: "111", parentID: "zzz", blockNumber: 0}
-			b2 := BlockMock{id: "222", parentID: "111", blockNumber: 1}
+			b1 := mock.NewBlock("111", "zzz", uint64(0))
+			b2 := mock.NewBlock("222", "111", uint64(1))
 			c.AddBlock(b1)
 			c.AddBlock(b2)
 			Expect(c.heads).To(ContainElement("222"))
@@ -236,7 +237,7 @@ var _ = Describe("Consensus", func() {
 
 		It("returns genesis", func() {
 			c := GetInst()
-			b1 := BlockMock{id: "111", parentID: "zzz", blockNumber: 0}
+			b1 := mock.NewBlock("111", "zzz", uint64(0))
 			c.AddBlock(b1)
 
 			head := c.GetBestBranch()
@@ -245,7 +246,7 @@ var _ = Describe("Consensus", func() {
 
 		It("returns when best head has no parent", func() {
 			c := GetInst()
-			b1 := BlockMock{id: "111", parentID: "zzz", blockNumber: 1}
+			b1 := mock.NewBlock("111", "zzz", uint64(1))
 			c.AddBlock(b1)
 
 			Expect(c.GetBestBranch()).To(BeNil())
@@ -253,13 +254,13 @@ var _ = Describe("Consensus", func() {
 
 		It("chooses most favorable when heads are same block number", func() {
 			c := GetInst()
-			b1a := BlockMock{id: "111a", parentID: "zzz", blockNumber: 5}
-			b2a := BlockMock{id: "222a", parentID: "111a", blockNumber: 6}
+			b1a := mock.NewBlock("111a", "zzz", uint64(5))
+			b2a := mock.NewBlock("222a", "111a", uint64(6))
 			c.AddBlock(b1a)
 			c.AddBlock(b2a)
 
-			b1b := BlockMock{id: "111b", parentID: "zzz", blockNumber: 5}
-			b2b := BlockMock{id: "222b", parentID: "111b", blockNumber: 6}
+			b1b := mock.NewBlock("111b", "zzz", uint64(5))
+			b2b := mock.NewBlock("222b", "111b", uint64(6))
 			c.AddBlock(b1b)
 			c.AddBlock(b2b)
 
@@ -270,14 +271,14 @@ var _ = Describe("Consensus", func() {
 
 		It("chooses most favorable", func() {
 			c := GetInst()
-			b1a := BlockMock{id: "111a", parentID: "zzz", blockNumber: 3}
-			b2a := BlockMock{id: "222a", parentID: "111a", blockNumber: 4}
+			b1a := mock.NewBlock("111a", "zzz", uint64(3))
+			b2a := mock.NewBlock("222a", "111a", uint64(4))
 			c.AddBlock(b1a)
 			c.AddBlock(b2a)
 
-			b1b := BlockMock{id: "111b", parentID: "zzz", blockNumber: 5}
-			b2b := BlockMock{id: "222b", parentID: "111b", blockNumber: 6}
-			b3b := BlockMock{id: "333b", parentID: "222b", blockNumber: 7}
+			b1b := mock.NewBlock("111b", "zzz", uint64(5))
+			b2b := mock.NewBlock("222b", "111b", uint64(6))
+			b3b := mock.NewBlock("333b", "222b", uint64(7))
 			c.AddBlock(b1b)
 			c.AddBlock(b2b)
 			c.AddBlock(b3b)
@@ -291,14 +292,14 @@ var _ = Describe("Consensus", func() {
 
 		It("chooses random favorable when more than one", func() {
 			c := GetInst()
-			b1a := BlockMock{id: "111a", parentID: "zzz", blockNumber: 4}
-			b2a := BlockMock{id: "222a", parentID: "111a", blockNumber: 5}
+			b1a := mock.NewBlock("111a", "zzz", uint64(4))
+			b2a := mock.NewBlock("222a", "111a", uint64(5))
 			c.AddBlock(b1a)
 			c.AddBlock(b2a)
 
-			b1b := BlockMock{id: "111b", parentID: "zzz", blockNumber: 5}
-			b2b := BlockMock{id: "222b", parentID: "111b", blockNumber: 6}
-			b3b := BlockMock{id: "333b", parentID: "222b", blockNumber: 7}
+			b1b := mock.NewBlock("111b", "zzz", uint64(5))
+			b2b := mock.NewBlock("222b", "111b", uint64(6))
+			b3b := mock.NewBlock("333b", "222b", uint64(7))
 			c.AddBlock(b1b)
 			c.AddBlock(b2b)
 			c.AddBlock(b3b)
@@ -337,7 +338,7 @@ func BenchmarkAddBlock(b *testing.B) {
 	parentBlockID := ""
 	for n := 0; n < b.N; n++ {
 		blockID := "b" + strconv.FormatUint(blockNumber, 10)
-		block := BlockMock{id: blockID, parentID: parentBlockID, blockNumber: blockNumber}
+		block := mock.NewBlock(blockID, parentBlockID, blockNumber)
 		added := c.AddBlock(block)
 		if !added {
 			b.Fail()
@@ -355,7 +356,7 @@ func BenchmarkAddBlockWithBranching(b *testing.B) {
 	parentBlockID := ""
 	for n := 0; n < b.N; n++ {
 		blockID := "b" + strconv.FormatUint(blockIDi, 10)
-		block := BlockMock{id: blockID, parentID: parentBlockID, blockNumber: blockNumber}
+		block := mock.NewBlock(blockID, parentBlockID, blockNumber)
 		added := c.AddBlock(block)
 		if !added {
 			b.Fail()
@@ -368,5 +369,5 @@ func BenchmarkAddBlockWithBranching(b *testing.B) {
 }
 
 func GetInst() *Consensus {
-	return NewConsensus(&depthcons.DepthConsensus{}, &depthcons.DepthCompetiton{})
+	return New(&depthcons.DepthConsensus{}, &depthcons.DepthCompetiton{})
 }
