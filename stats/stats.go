@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	blkspec "github.com/blckit/go-spec-block"
+	spec "github.com/blckit/go-interface"
 )
 
 type ConsensusStats struct {
@@ -47,7 +47,7 @@ func NewConsensusStats() *ConsensusStats {
 	return s
 }
 
-func (s *ConsensusStats) AddBlock(b blkspec.Block) {
+func (s *ConsensusStats) AddBlock(b spec.Block) {
 	blockID := b.GetID()
 	blockNumber := b.GetBlockNumber()
 	timeEntered := time.Now().UnixNano()
@@ -66,7 +66,7 @@ func (s *ConsensusStats) AddBlock(b blkspec.Block) {
 	s.Tree.add(b)
 }
 
-func (s *ConsensusStats) EliminateBlock(b blkspec.Block) {
+func (s *ConsensusStats) EliminateBlock(b spec.Block) {
 	blockID := b.GetID()
 	blockNumber := b.GetBlockNumber()
 	timeExited := time.Now().UnixNano()
@@ -85,6 +85,6 @@ func (s *ConsensusStats) EliminateBlock(b blkspec.Block) {
 	s.Tree.eliminate(b)
 }
 
-func (s *ConsensusStats) RemoveBlock(b blkspec.Block) {
+func (s *ConsensusStats) RemoveBlock(b spec.Block) {
 	s.Tree.remove(b)
 }

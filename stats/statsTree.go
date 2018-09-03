@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	blkspec "github.com/blckit/go-spec-block"
+	spec "github.com/blckit/go-interface"
 	q "github.com/golang-collections/go-datastructures/queue"
 )
 
@@ -50,7 +50,7 @@ func newStatsTree() *StatsTree {
 	return t
 }
 
-func (t *StatsTree) add(b blkspec.Block) {
+func (t *StatsTree) add(b spec.Block) {
 	block := &Block{
 		ID:          b.GetID(),
 		parentID:    b.GetParentID(),
@@ -60,11 +60,11 @@ func (t *StatsTree) add(b blkspec.Block) {
 	t.queue.Put([]interface{}{taskTypeAdd, block})
 }
 
-func (t *StatsTree) eliminate(b blkspec.Block) {
+func (t *StatsTree) eliminate(b spec.Block) {
 	t.queue.Put([]interface{}{taskTypeEliminate, b.GetID()})
 }
 
-func (t *StatsTree) remove(b blkspec.Block) {
+func (t *StatsTree) remove(b spec.Block) {
 	t.queue.Put([]interface{}{taskTypeRemove, b.GetID()})
 }
 
