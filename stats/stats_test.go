@@ -1,8 +1,6 @@
 package stats
 
 import (
-	"encoding/json"
-	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -10,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	"github.com/blckit/go-consensus/mock"
+	"github.com/blckit/go-test-support/mock"
 )
 
 var _ = Describe("Stats", func() {
@@ -19,19 +17,21 @@ var _ = Describe("Stats", func() {
 
 		It("adds block and updates stats", func() {
 			s := NewConsensusStats()
+			s.Start()
 			b := mock.NewBlock("111", "000", uint64(1))
 
 			s.AddBlock(b)
 			Expect(s.timeEntered["111"] > 0).To(BeTrue())
-			Expect(s.BlockCount).To(Equal(uint64(1)))
-			Expect(s.BlockEnterCount[0]).To(Equal(uint64(1)))
+			Expect(s.TotalBlocks).To(Equal(uint64(1)))
+			Expect(s.BlockDepthEnterCount[0]).To(Equal(uint64(1)))
 		})
 	})
 
-	Describe("#EliminateBlock", func() {
+	Describe("#DisqualifyBlock", func() {
 
-		It("eliminates block and updates stats", func() {
+		It("Disqualifies block and updates stats", func() {
 			s := NewConsensusStats()
+			s.Start()
 			b1a := mock.NewBlock("111a", "000", uint64(1))
 			b1b := mock.NewBlock("111b", "000", uint64(1))
 			b2 := mock.NewBlock("222", "111a", uint64(2))
@@ -41,21 +41,21 @@ var _ = Describe("Stats", func() {
 			s.AddBlock(b2)
 
 			time.Sleep(10 * time.Millisecond)
-			s.EliminateBlock(b1a)
-			Expect(s.BlockExitCount[1]).To(Equal(uint64(1)))
+			s.DisqualifyBlock(b1a)
+			Expect(s.BlockDepthExitCount[1]).To(Equal(uint64(1)))
 			//fmt.Printf("avg duration: %d\n", s.AvgDurationAtDepth[1])
-			Expect(s.AvgDurationAtDepth[1] > uint64(10*time.Millisecond)).To(BeTrue())
-			Expect(s.AvgDurationAtDepth[1] < uint64(15*time.Millisecond)).To(BeTrue())
-			Expect(s.BlockCount).To(Equal(uint64(2)))
+			Expect(s.AvgDurationAtDepth[1] > int64(10*time.Millisecond)).To(BeTrue())
+			Expect(s.AvgDurationAtDepth[1] < int64(15*time.Millisecond)).To(BeTrue())
+			Expect(s.TotalBlocks).To(Equal(uint64(3)))
 			Expect(s.timeEntered["111a"]).To(Equal(int64(0)))
 
 			time.Sleep(10 * time.Millisecond)
-			s.EliminateBlock(b1b)
-			Expect(s.BlockExitCount[1]).To(Equal(uint64(2)))
-			Expect(s.AvgDurationAtDepth[1] > uint64(15*time.Millisecond)).To(BeTrue())
+			s.DisqualifyBlock(b1b)
+			Expect(s.BlockDepthExitCount[1]).To(Equal(uint64(2)))
+			Expect(s.AvgDurationAtDepth[1] > int64(15*time.Millisecond)).To(BeTrue())
 			//fmt.Printf("avg duration: %d\n", s.AvgDurationAtDepth[1])
-			Expect(s.AvgDurationAtDepth[1] < uint64(20*time.Millisecond)).To(BeTrue())
-			Expect(s.BlockCount).To(Equal(uint64(1)))
+			Expect(s.AvgDurationAtDepth[1] < int64(20*time.Millisecond)).To(BeTrue())
+			Expect(s.TotalBlocks).To(Equal(uint64(3)))
 			Expect(s.timeEntered["111b"]).To(Equal(int64(0)))
 		})
 	})
@@ -63,6 +63,8 @@ var _ = Describe("Stats", func() {
 
 func BenchmarkAddBlock(b *testing.B) {
 	s := NewConsensusStats()
+	s.Start()
+
 	blockNumber := uint64(0)
 	var blockID string
 	for n := 0; n < b.N; n++ {
@@ -74,24 +76,24 @@ func BenchmarkAddBlock(b *testing.B) {
 	}
 }
 
-func BenchmarkEliminateBlock(b *testing.B) {
+func BenchmarkDisqualifyBlock(b *testing.B) {
 	s := NewConsensusStats()
+	s.Start()
+
 	blockNumber := uint64(0)
-	blocks := make(map[string]mock.Block, 0)
+	blocks := make(map[string]*mock.Block, 0)
 	var blockID string
 	for n := 0; n < b.N+100; n++ {
 		prevBlockID := blockID
 		blockID := "b" + strconv.FormatUint(blockNumber, 10)
 		b := mock.NewBlock(blockID, prevBlockID, blockNumber)
+		blocks[blockID] = b
 		s.AddBlock(b)
 		blockNumber++
 	}
 	b.ResetTimer()
 	for n := b.N; n >= 0; n-- {
 		blockID := "b" + strconv.FormatInt(int64(n), 10)
-		s.EliminateBlock(blocks[blockID])
+		s.DisqualifyBlock(blocks[blockID])
 	}
-
-	sb, _ := json.MarshalIndent(s, "", "  ")
-	fmt.Printf("%v\n", string(sb))
 }

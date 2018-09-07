@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	"github.com/blckit/go-consensus/mock"
+	"github.com/blckit/go-test-support/mock"
 )
 
 var _ = Describe("StatsTree", func() {
@@ -30,7 +30,7 @@ var _ = Describe("StatsTree", func() {
 		It("adds blocks to tree", func(done Done) {
 			t, _ := buildTree()
 
-			t.OnFrameReady = func() {
+			t.OnChange = func() {
 				defer GinkgoRecover()
 				t.stop()
 
@@ -69,7 +69,7 @@ var _ = Describe("StatsTree", func() {
 			b0 := mock.NewBlock("000", "not_used", uint64(4))
 			t.add(b0)
 
-			t.OnFrameReady = func() {
+			t.OnChange = func() {
 				defer GinkgoRecover()
 				t.stop()
 
@@ -88,21 +88,21 @@ var _ = Describe("StatsTree", func() {
 		})
 	})
 
-	Describe("#eliminate", func() {
+	Describe("#disqualify", func() {
 
-		It("marks branch as eliminated", func(done Done) {
+		It("marks branch as disqualified", func(done Done) {
 			t, blocks := buildTree()
 
-			t.eliminate(blocks["222"])
+			t.disqualify(blocks["222"])
 
-			t.OnFrameReady = func() {
+			t.OnChange = func() {
 				defer GinkgoRecover()
 				t.stop()
 
-				Expect(t.blocks["222"].IsEliminated).To(BeTrue())
-				Expect(t.blocks["331"].IsEliminated).To(BeTrue())
-				Expect(t.blocks["332"].IsEliminated).To(BeTrue())
-				Expect(t.blocks["333"].IsEliminated).To(BeTrue())
+				Expect(t.blocks["222"].IsDisqualified).To(BeTrue())
+				Expect(t.blocks["331"].IsDisqualified).To(BeTrue())
+				Expect(t.blocks["332"].IsDisqualified).To(BeTrue())
+				Expect(t.blocks["333"].IsDisqualified).To(BeTrue())
 
 				close(done)
 			}
@@ -113,21 +113,25 @@ var _ = Describe("StatsTree", func() {
 
 	Describe("#remove", func() {
 
-		It("removes branch", func(done Done) {
+		It("removes block", func(done Done) {
 			t, blocks := buildTree()
 
 			t.remove(blocks["222"])
 
-			t.OnFrameReady = func() {
+			t.OnChange = func() {
 				defer GinkgoRecover()
 				t.stop()
 
+				Expect(t.blocks["111"]).To(BeNil())
 				Expect(t.blocks["222"]).To(BeNil())
-				Expect(t.blocks["331"]).To(BeNil())
-				Expect(t.blocks["332"]).To(BeNil())
-				Expect(t.blocks["333"]).To(BeNil())
+				Expect(t.blocks["331"]).ToNot(BeNil())
+				Expect(t.blocks["332"]).ToNot(BeNil())
+				Expect(t.blocks["333"]).ToNot(BeNil())
 
-				Expect(len(t.blocks["111"].Children)).To(Equal(0))
+				Expect(len(t.Roots)).To(Equal(3))
+				for _, r := range t.Roots {
+					Expect(r.ID == "331" || r.ID == "332" || r.ID == "333").To(BeTrue())
+				}
 
 				close(done)
 			}
@@ -146,7 +150,7 @@ var _ = Describe("StatsTree", func() {
 			var sumFrameTimes time.Duration
 			frameCount := 10
 
-			t.OnFrameReady = func() {
+			t.OnChange = func() {
 				frameEnd := time.Now().UnixNano()
 				defer GinkgoRecover()
 				frameCount--
@@ -182,7 +186,7 @@ var _ = Describe("StatsTree", func() {
 			frameCount := 20
 			var sumFrameTimes time.Duration
 
-			t.OnFrameReady = func() {
+			t.OnChange = func() {
 				frameEnd := time.Now().UnixNano()
 				defer GinkgoRecover()
 				frameCount--
@@ -222,7 +226,7 @@ var _ = Describe("StatsTree", func() {
 	})
 })
 
-func buildTree() (*StatsTree, map[string]mock.Block) {
+func buildTree() (*StatsTree, map[string]*mock.Block) {
 	t := newStatsTree()
 	b1 := mock.NewBlock("111", "000", uint64(5))
 	b2 := mock.NewBlock("222", "111", uint64(6))
@@ -235,6 +239,6 @@ func buildTree() (*StatsTree, map[string]mock.Block) {
 	t.add(b3b)
 	t.add(b3c)
 
-	blocks := map[string]mock.Block{b1.GetID(): b1, b2.GetID(): b2, b3a.GetID(): b3a, b3b.GetID(): b3b, b3c.GetID(): b3c}
+	blocks := map[string]*mock.Block{b1.GetID(): b1, b2.GetID(): b2, b3a.GetID(): b3a, b3b.GetID(): b3b, b3c.GetID(): b3c}
 	return t, blocks
 }

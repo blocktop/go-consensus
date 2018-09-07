@@ -54,7 +54,7 @@ import (
 	"sync"
 
 	stats "github.com/blckit/go-consensus/stats"
-	spec "github.com/blckit/go-interface"
+	spec "github.com/blckit/go-spec"
 )
 
 // Consensus tracks incoming blocks that are younger than Depth. It tracks
@@ -79,11 +79,11 @@ type Consensus struct {
 	// spec.Blocks already submitted for a given parent block
 	alreadySeen map[string][]string
 
-	// Parent blocks that the local node has already competed for
+	// Block numbers that the local node has already competed for
 	competed []string
 
-	// Blocks eleminated from consideration
-	eliminated []spec.Block
+	// Blocks disqualified from consideration
+	disqualified []spec.Block
 
 	// Function to be called when block is confirmed (removed as an old block)
 	onBlockConfirmed spec.BlockConfirmedHandler
@@ -156,9 +156,14 @@ func (c *Consensus) AddBlock(block spec.Block) (added bool) {
 	}
 	c.setSeen(block)
 
+	// make sure block is not too old
+	if c.getDepth(block) > int(c.ConsensusSpec.GetDepth()) {
+		return false
+	}
+
 	// make sure parent was not aready eliminated
 	parentID := block.GetParentID()
-	for _, elimParent := range c.eliminated {
+	for _, elimParent := range c.disqualified {
 		if elimParent.GetID() == parentID {
 			return false
 		}
@@ -167,44 +172,44 @@ func (c *Consensus) AddBlock(block spec.Block) (added bool) {
 	blockID := block.GetID()
 	parent := c.blocks[parentID]
 
-	if (parent != nil && block.GetBlockNumber() != parent.GetBlockNumber() + 1) {
+	if parent != nil && block.GetBlockNumber() != parent.GetBlockNumber()+1 {
 		return false
 	}
 
 	c.Lock()
-		if parent != nil {
-			// remove head
-			c.removeHead(parentID)
+	if parent != nil {
+		// remove head
+		c.removeHead(parentID)
 
-			// remove unfavorable siblings
-			siblings := append(c.getChildren(parentID), block)
-			favorableSiblings := c.removeUnfavorables(siblings)
-			var newBlockOK bool
-			for _, s := range favorableSiblings {
-				if s.GetID() == blockID {
-					newBlockOK = true
-					break
-				}
-			}
-
-			if !newBlockOK {
-				c.eliminated = append(c.eliminated, block)
-				c.Unlock()
-				return false // new block was not favorable against siblings
+		// remove unfavorable siblings
+		siblings := append(c.getChildren(parentID), block)
+		favorableSiblings := c.removeUnfavorables(siblings)
+		var newBlockOK bool
+		for _, s := range favorableSiblings {
+			if s.GetID() == blockID {
+				newBlockOK = true
+				break
 			}
 		}
 
-		children := c.getChildren(blockID)
-		if len(children) == 0 {
-			// this will be a head block
-			c.addHead(blockID)
-		} else {
-			// keep the most favorable children
-			c.removeUnfavorables(children)
+		if !newBlockOK {
+			c.disqualified = append(c.disqualified, block)
+			c.Unlock()
+			return false // new block was not favorable against siblings
 		}
+	}
 
-		c.blocks[blockID] = block
-		c.removeOldBlocks()
+	children := c.getChildren(blockID)
+	if len(children) == 0 {
+		// this will be a head block
+		c.addHead(blockID)
+	} else {
+		// keep the most favorable children
+		c.removeUnfavorables(children)
+	}
+
+	c.blocks[blockID] = block
+	c.removeOldBlocks()
 	c.Unlock()
 
 	go c.Stats.AddBlock(block)
@@ -226,13 +231,13 @@ func (c *Consensus) OnBlockConfirmed(f spec.BlockConfirmedHandler) {
 func (c *Consensus) GetBestBranch() []spec.Block {
 	c.Lock()
 	defer c.Unlock()
-	
+
 	if len(c.heads) == 0 {
 		return nil
 	}
 
 	hs := make([]spec.Block, 0)
-	
+
 	for _, headID := range c.heads {
 		head := c.blocks[headID]
 		if !c.wasCompeted(headID) && (head.GetBlockNumber() == 0 || c.getParent(headID) != nil) {
@@ -276,7 +281,7 @@ func (c *Consensus) removeUnfavorables(blocks []spec.Block) []spec.Block {
 		}
 
 		if !bOK {
-			c.removeBranch(bid)
+			c.removeBranch(bid, true)
 		}
 	}
 
@@ -311,7 +316,7 @@ func (c *Consensus) getFavorables(blocks []spec.Block) []spec.Block {
 			bs = append(bs[:j], bs[j+1:]...)
 			j = i + 1 // reset j since ith element is now the next block
 		case spec.ComparatorResultKeepBoth:
-			j++	
+			j++
 		}
 
 		if j >= len(bs)-1 {
@@ -410,16 +415,16 @@ func (c *Consensus) getChildren(parentBlockID string) []spec.Block {
 	return children
 }
 
-func (c *Consensus) removeBranch(blockID string) {
+func (c *Consensus) removeBranch(blockID string, disqualify bool) {
 	children := c.getChildren(blockID)
 	for _, child := range children {
-		c.removeBranch(child.GetID())
+		c.removeBranch(child.GetID(), disqualify)
 	}
 
-	c.removeBlock(blockID)
+	c.removeBlock(blockID, disqualify)
 }
 
-func (c *Consensus) removeBlock(blockID string) {
+func (c *Consensus) removeBlock(blockID string, disqualify bool) {
 	block := c.blocks[blockID]
 	if block == nil {
 		return
@@ -429,18 +434,20 @@ func (c *Consensus) removeBlock(blockID string) {
 	delete(c.blocks, blockID)
 	delete(c.alreadySeen, blockID)
 	c.competed = deleteFromSlice(c.competed, blockID)
-	c.elminateBlock(block)
+	if disqualify {
+		c.disqualifyBlock(block)
+	}
 }
 
-func (c *Consensus) elminateBlock(block spec.Block) {
+func (c *Consensus) disqualifyBlock(block spec.Block) {
 	blockID := block.GetID()
-	for _, e := range c.eliminated {
+	for _, e := range c.disqualified {
 		if e.GetID() == blockID {
 			return
 		}
 	}
-	c.eliminated = append(c.eliminated, block)
-	go c.Stats.EliminateBlock(block)
+	c.disqualified = append(c.disqualified, block)
+	go c.Stats.DisqualifyBlock(block)
 }
 
 func (c *Consensus) removeHead(blockID string) {
@@ -456,39 +463,46 @@ func (c *Consensus) removeOldBlocks() {
 		}
 	}
 	if len(confirmedIDs) > 1 {
-		// TODO: we should have reached consensus, need to figure out logging 
-		// or should we alert the client program 
+		// TODO: we should have reached consensus, need to figure out logging
+		// or should we alert the client program
 		// or should we not emit any events and wait for to problem to resolve by receiving more blocks?
 		// or its possible that a fork was resolved and now we have to confirm several blocks in a row
+		panic("two blocks confirmed")
 	}
 	for _, blockID := range confirmedIDs {
+		block := c.blocks[blockID]
 		if c.onBlockConfirmed != nil {
-			go c.onBlockConfirmed(c.blocks[blockID])
+			go c.onBlockConfirmed(block)
 		}
-		c.removeBlock(blockID)
+		c.removeBlock(blockID, false)
+		go c.Stats.RemoveBlock(block)
 	}
 
 	depth := uint64(c.ConsensusSpec.GetDepth())
-	for i := 0; i < len(c.eliminated); i++ {
-		block := c.eliminated[i]
+	for i := 0; i < len(c.disqualified); i++ {
+		block := c.disqualified[i]
 		blockNumber := block.GetBlockNumber()
-		if maxBlockNumber >= blockNumber && maxBlockNumber - blockNumber > depth {
+		if maxBlockNumber >= blockNumber && maxBlockNumber-blockNumber > depth {
 			go c.Stats.RemoveBlock(block)
-			c.eliminated = append(c.eliminated[:i], c.eliminated[i+1:]...)
+			c.disqualified = append(c.disqualified[:i], c.disqualified[i+1:]...)
 		}
 	}
 }
 
 func (c *Consensus) getMaxBlockNumber() uint64 {
 	var max uint64
-	for _, b := range c.blocks {
-		blockNumber := b.GetBlockNumber()
+	for _, headID := range c.heads {
+		blockNumber := c.blocks[headID].GetBlockNumber()
 		if blockNumber > max {
 			max = blockNumber
 		}
 	}
 
 	return max
+}
+
+func (c *Consensus) getDepth(block spec.Block) int {
+	return int(int64(c.getMaxBlockNumber()) - int64(block.GetBlockNumber()))
 }
 
 func deleteFromSlice(slice []string, value string) []string {

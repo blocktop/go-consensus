@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	spec "github.com/blckit/go-interface"
+	spec "github.com/blckit/go-spec"
 )
 
 type ConsensusStats struct {
@@ -12,79 +12,112 @@ type ConsensusStats struct {
 
 	// Tracks average duration in nanoseconds blocks were in the system
 	// by depth they were removed
-	AvgDurationAtDepth map[uint]uint64 `json:"avgDurationAtDepth"`
+	AvgDurationAtDepth map[uint64]int64 `json:"avgDurationAtDepth"`
 
 	// Tracks number of blocks exited at each depth
-	BlockExitCount map[uint]uint64 `json:"blockExitCount"`
+	BlockDepthExitCount map[uint64]uint64 `json:"BlockDepthExitCount"`
 
 	// Tracks the number of blocks entered at each depth
-	BlockEnterCount map[uint]uint64 `json:"blockEnterCount"`
+	BlockDepthEnterCount map[uint64]uint64 `json:"BlockDepthEnterCount"`
 
-	// Total blocks being tracked
-	BlockCount uint64 `json:"blockCount,string"`
+	// Total blocks that have been processed
+	TotalBlocks uint64 `json:"totalBlocks,string"`
+
+	// Blocks being actively tracked including diqualified blocks
+	ActiveBlockCount uint64 `json:"activeBlockCount,string`
 
 	// Stats on blocks organized in depth tree
 	Tree *StatsTree `json:"tree"`
 
-	// Last update timestamp in UnixNano
-	UpdateTimestamp int `json:"updateTimestamp"` // milliseconds
+	// Last update timestamp in millisconds
+	UpdateTimestamp int64 `json:"updateTimestamp"` // milliseconds
 
 	// time block entered the system as UnixNano
 	timeEntered map[string]int64
 
 	// Maximum block number currently in the system
 	maxBlockNumber uint64
+
+	started bool
 }
 
 func NewConsensusStats() *ConsensusStats {
 	s := &ConsensusStats{}
 
 	s.timeEntered = make(map[string]int64, 0)
-	s.BlockEnterCount = make(map[uint]uint64, 0)
-	s.BlockExitCount = make(map[uint]uint64, 0)
-	s.AvgDurationAtDepth = make(map[uint]uint64)
+	s.BlockDepthEnterCount = make(map[uint64]uint64, 0)
+	s.BlockDepthExitCount = make(map[uint64]uint64, 0)
+	s.AvgDurationAtDepth = make(map[uint64]int64)
 	s.Tree = newStatsTree()
 	return s
 }
 
+func (s *ConsensusStats) Start() {
+	if s.started {
+		return
+	}
+	s.started = true
+	s.Tree.start()
+}
+
+func (s *ConsensusStats) Stop() {
+	if !s.started {
+		return
+	}
+	s.started = false
+	s.Tree.stop()
+}
+
 func (s *ConsensusStats) AddBlock(b spec.Block) {
+	if !s.started {
+		return
+	}
+
 	blockID := b.GetID()
 	blockNumber := b.GetBlockNumber()
 	timeEntered := time.Now().UnixNano()
-	s.BlockCount++
+	s.ActiveBlockCount++
+	s.TotalBlocks++
 
 	s.Lock()
 	if blockNumber > s.maxBlockNumber {
 		s.maxBlockNumber = blockNumber
 	}
-	depth := uint(s.maxBlockNumber - blockNumber)
+	depth := s.maxBlockNumber - blockNumber
 	s.timeEntered[blockID] = timeEntered
-	s.UpdateTimestamp = int(timeEntered / int64(time.Millisecond))
-	s.BlockEnterCount[depth]++
+	s.UpdateTimestamp = timeEntered / int64(time.Millisecond)
+	s.BlockDepthEnterCount[depth]++
 	s.Unlock()
 
 	s.Tree.add(b)
 }
 
-func (s *ConsensusStats) EliminateBlock(b spec.Block) {
+func (s *ConsensusStats) DisqualifyBlock(b spec.Block) {
+	if !s.started {
+		return
+	}
+
 	blockID := b.GetID()
 	blockNumber := b.GetBlockNumber()
 	timeExited := time.Now().UnixNano()
-	s.BlockCount--
 
 	s.Lock()
-	duration := uint64(timeExited - s.timeEntered[blockID])
-	s.UpdateTimestamp = int(timeExited / int64(time.Millisecond))
-	depth := uint(s.maxBlockNumber - blockNumber)
-	sumDuration := s.AvgDurationAtDepth[depth]*s.BlockExitCount[depth] + duration
-	s.BlockExitCount[depth]++
-	s.AvgDurationAtDepth[depth] = sumDuration / s.BlockExitCount[depth]
+	duration := timeExited - s.timeEntered[blockID]
+	s.UpdateTimestamp = timeExited / int64(time.Millisecond)
+	depth := s.maxBlockNumber - blockNumber
+	sumDuration := s.AvgDurationAtDepth[depth]*int64(s.BlockDepthExitCount[depth]) + duration
+	s.BlockDepthExitCount[depth]++
+	s.AvgDurationAtDepth[depth] = sumDuration / int64(s.BlockDepthExitCount[depth])
 	delete(s.timeEntered, blockID)
 	s.Unlock()
 
-	s.Tree.eliminate(b)
+	s.Tree.disqualify(b)
 }
 
 func (s *ConsensusStats) RemoveBlock(b spec.Block) {
+	if !s.started {
+		return
+	}
+	s.ActiveBlockCount--
 	s.Tree.remove(b)
 }

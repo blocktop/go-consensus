@@ -2,7 +2,6 @@ package consensus
 
 import (
 	"context"
-	"math/rand"
 	"strconv"
 	"testing"
 	"time"
@@ -11,7 +10,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	depthcons "github.com/blckit/go-consensus-depth"
-	mock "github.com/blckit/go-consensus/mock"
+	mock "github.com/blckit/go-test-support/mock"
 )
 
 type BlockMock struct {
@@ -28,7 +27,6 @@ func (b BlockMock) GetParentID() string {
 func (b BlockMock) GetBlockNumber() uint64 {
 	return b.blockNumber
 }
-
 
 var _ = Describe("Consensus", func() {
 
@@ -349,6 +347,7 @@ func BenchmarkAddBlock(b *testing.B) {
 	}
 }
 
+/*
 func BenchmarkAddBlockWithBranching(b *testing.B) {
 	c := GetInst()
 	blockNumber := uint64(0)
@@ -360,13 +359,14 @@ func BenchmarkAddBlockWithBranching(b *testing.B) {
 		added := c.AddBlock(block)
 		if !added {
 			b.Fail()
-		} else if rand.Intn(4) > 0 {  // 3/4 of time continue the branch, 1/4 of time create a sibling
+		} else if rand.Intn(4) > 0 { // 3/4 of time continue the branch, 1/4 of time create a sibling
 			blockNumber++
 			parentBlockID = blockID
 		}
 		blockIDi++
 	}
 }
+*/
 
 func GetInst() *Consensus {
 	return New(&depthcons.DepthConsensus{}, &depthcons.DepthCompetiton{})

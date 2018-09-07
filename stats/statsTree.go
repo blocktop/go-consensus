@@ -6,62 +6,62 @@ import (
 	"sync"
 	"time"
 
-	spec "github.com/blckit/go-interface"
+	spec "github.com/blckit/go-spec"
 	q "github.com/golang-collections/go-datastructures/queue"
 )
 
 type StatsTree struct {
 	sync.Mutex
-	Roots           []*Block `json:"roots"`
-	MinBlockNumber  uint64   `json:"minBlockNumber,string"`
-	MaxBlockNumber  uint64   `json:"maxBlockNumber,string"`
-	UpdateTimestamp int      `json:"updateTimestamp"` //millisecond
+	Roots           []*TreeBlock `json:"roots"`
+	MinBlockNumber  uint64       `json:"minBlockNumber,string"`
+	MaxBlockNumber  uint64       `json:"maxBlockNumber,string"`
+	UpdateTimestamp int64        `json:"updateTimestamp"` //millisecond
 	queue           *q.Queue
 	started         bool
 	frameRate       float64
-	blocks          map[string]*Block
-	OnFrameReady    func() `json:"-"`
+	blocks          map[string]*TreeBlock
+	OnChange        func() `json:"-"`
 }
 
-type Block struct {
-	ID           string   `json:"id"`
-	Children     []*Block `json:"children"`
-	BlockNumber  uint64   `json:"blockNumber,string"`
-	IsEliminated bool     `json:"isEliminated"`
-	parentID     string
+type TreeBlock struct {
+	ID             string       `json:"id"`
+	Children       []*TreeBlock `json:"children"`
+	BlockNumber    uint64       `json:"blockNumber,string"`
+	IsDisqualified bool         `json:"IsDisqualified"`
+	parentID       string
 }
 
 const (
 	queueHeight      int64   = 100000
 	defaultFrameRate float64 = 30.0
 	taskTypeAdd      int     = iota
-	taskTypeEliminate
+	taskTypeDisqualify
 	taskTypeRemove
 )
 
 func newStatsTree() *StatsTree {
 	t := &StatsTree{}
-	t.Roots = make([]*Block, 0)
-	t.UpdateTimestamp = int(time.Now().UnixNano() / 1000000)
+	t.Roots = make([]*TreeBlock, 0)
+	t.UpdateTimestamp = time.Now().UnixNano() / int64(time.Millisecond)
 	t.queue = q.New(queueHeight)
 	t.frameRate = defaultFrameRate
-	t.blocks = make(map[string]*Block, 0)
+	t.blocks = make(map[string]*TreeBlock, 0)
 
 	return t
 }
 
 func (t *StatsTree) add(b spec.Block) {
-	block := &Block{
+	block := &TreeBlock{
 		ID:          b.GetID(),
 		parentID:    b.GetParentID(),
 		BlockNumber: b.GetBlockNumber(),
-		Children:    make([]*Block, 0)}
+		Children:    make([]*TreeBlock, 0)}
 
 	t.queue.Put([]interface{}{taskTypeAdd, block})
 }
 
-func (t *StatsTree) eliminate(b spec.Block) {
-	t.queue.Put([]interface{}{taskTypeEliminate, b.GetID()})
+func (t *StatsTree) disqualify(b spec.Block) {
+	t.queue.Put([]interface{}{taskTypeDisqualify, b.GetID()})
 }
 
 func (t *StatsTree) remove(b spec.Block) {
@@ -69,8 +69,8 @@ func (t *StatsTree) remove(b spec.Block) {
 }
 
 type newTreeProcess struct {
-	roots  []*Block
-	blocks map[string]*Block
+	roots  []*TreeBlock
+	blocks map[string]*TreeBlock
 }
 
 func (t *StatsTree) setFrameRate(rate float64) {
@@ -97,8 +97,8 @@ func (t *StatsTree) processLoop() {
 	for t.started {
 		// copy the tree
 		proc := &newTreeProcess{}
-		proc.blocks = make(map[string]*Block, len(t.blocks))
-		proc.roots = make([]*Block, len(t.Roots))
+		proc.blocks = make(map[string]*TreeBlock, len(t.blocks))
+		proc.roots = make([]*TreeBlock, len(t.Roots))
 		for i, root := range t.Roots {
 			proc.roots[i] = copyBlock(root, proc)
 		}
@@ -128,11 +128,11 @@ func (t *StatsTree) processLoop() {
 			t.blocks = proc.blocks
 			t.MinBlockNumber = min
 			t.MaxBlockNumber = max
-			t.UpdateTimestamp = int(time.Now().UnixNano() / 1000000) // millisecond
+			t.UpdateTimestamp = time.Now().UnixNano() / int64(time.Millisecond)
 			t.Unlock()
 
-			if t.OnFrameReady != nil {
-				go t.OnFrameReady()
+			if t.OnChange != nil {
+				go t.OnChange()
 			}
 		}
 	}
@@ -166,18 +166,18 @@ func (t *StatsTree) processQueueItem(dataSet []interface{}, proc *newTreeProcess
 	taskType := data[0].(int)
 	switch taskType {
 	case taskTypeAdd:
-		block := data[1].(*Block)
+		block := data[1].(*TreeBlock)
 		parent := proc.blocks[block.parentID]
 		add(block, parent, proc)
 		return true
 
-	case taskTypeEliminate:
+	case taskTypeDisqualify:
 		blockID := data[1].(string)
 		block := proc.blocks[blockID]
 		if block == nil {
 			return false
 		}
-		eliminate(block)
+		disqualify(block)
 		return true
 
 	case taskTypeRemove:
@@ -187,15 +187,6 @@ func (t *StatsTree) processQueueItem(dataSet []interface{}, proc *newTreeProcess
 			return false
 		}
 		remove(block, proc)
-		parent := proc.blocks[block.parentID]
-		if parent != nil {
-			for i, c := range parent.Children {
-				if c.ID == blockID {
-					parent.Children = append(parent.Children[:i], parent.Children[i+1:]...)
-					break
-				}
-			}
-		}
 		return true
 
 	default:
@@ -203,7 +194,7 @@ func (t *StatsTree) processQueueItem(dataSet []interface{}, proc *newTreeProcess
 	}
 }
 
-func add(block *Block, parent *Block, proc *newTreeProcess) {
+func add(block *TreeBlock, parent *TreeBlock, proc *newTreeProcess) {
 	if parent == nil {
 		// no parent, so this is a root
 		proc.roots = append(proc.roots, block)
@@ -223,22 +214,34 @@ func add(block *Block, parent *Block, proc *newTreeProcess) {
 	proc.blocks[block.ID] = block
 }
 
-func eliminate(block *Block) {
-	block.IsEliminated = true
+func disqualify(block *TreeBlock) {
+	block.IsDisqualified = true
 	for _, c := range block.Children {
-		eliminate(c)
+		disqualify(c)
 	}
 }
 
-func remove(block *Block, proc *newTreeProcess) {
-	for _, c := range block.Children {
-		remove(c, proc)
+func remove(block *TreeBlock, proc *newTreeProcess) {
+	parent := proc.blocks[block.parentID]
+	if parent != nil {
+		remove(parent, proc)
 	}
-	delete(proc.blocks, block.ID)
+
+	// remove from roots and promote children to roots
+	for i, r := range proc.roots {
+		if r.ID == block.ID {
+			proc.roots = append(proc.roots[:i], proc.roots[i+1:]...)
+			break
+		}
+	}
+	proc.roots = append(proc.roots, block.Children...)
+	// release references
 	block.Children = nil
+
+	delete(proc.blocks, block.ID)
 }
 
-func getMaxBlockNumber(b *Block) uint64 {
+func getMaxBlockNumber(b *TreeBlock) uint64 {
 	max := b.BlockNumber
 	for _, c := range b.Children {
 		childMax := getMaxBlockNumber(c)
@@ -249,13 +252,13 @@ func getMaxBlockNumber(b *Block) uint64 {
 	return max
 }
 
-func copyBlock(b *Block, proc *newTreeProcess) *Block {
-	newBlock := &Block{
-		ID:           b.ID,
-		parentID:     b.parentID,
-		IsEliminated: b.IsEliminated}
+func copyBlock(b *TreeBlock, proc *newTreeProcess) *TreeBlock {
+	newBlock := &TreeBlock{
+		ID:             b.ID,
+		parentID:       b.parentID,
+		IsDisqualified: b.IsDisqualified}
 
-	newBlock.Children = make([]*Block, len(b.Children))
+	newBlock.Children = make([]*TreeBlock, len(b.Children))
 	for i, c := range b.Children {
 		newBlock.Children[i] = copyBlock(c, proc)
 	}
