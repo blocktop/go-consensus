@@ -118,6 +118,7 @@ func (s *ConsensusStats) RemoveBlock(b spec.Block) {
 	if !s.started {
 		return
 	}
+	// TODO more are being removed than added??
 	s.ActiveBlockCount--
 	s.Tree.remove(b)
 }
