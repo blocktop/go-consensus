@@ -112,7 +112,10 @@ func New(consensusDepth uint, blockComparator spec.BlockComparator) *Consensus {
 // WasSeen returns true if the given block has already been sent to the
 // AddBlock method.
 func (c *Consensus) WasSeen(block spec.Block) bool {
+	c.Lock()
 	seen := c.alreadySeen[block.GetParentID()]
+	c.Unlock()
+	
 	if seen == nil {
 		return false
 	}
@@ -300,6 +303,8 @@ func (c *Consensus) getBranch(block spec.Block) []spec.Block {
 
 func (c *Consensus) setSeen(block spec.Block) {
 	parentID := block.GetParentID()
+
+	c.Lock()
 	seen := c.alreadySeen[parentID]
 
 	if seen == nil {
@@ -307,6 +312,7 @@ func (c *Consensus) setSeen(block spec.Block) {
 	}
 
 	c.alreadySeen[parentID] = append(seen, block.GetID())
+	c.Unlock()
 }
 
 func (c *Consensus) addHead(blockID string) {
