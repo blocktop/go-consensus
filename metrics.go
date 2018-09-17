@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	spec "github.com/blckit/go-spec"
+	spec "github.com/blocktop/go-spec"
 	mtr "github.com/rcrowley/go-metrics"
 )
 

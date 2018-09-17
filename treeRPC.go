@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"time"
 
-	rpcconsensus "github.com/blckit/go-rpc-client/consensus"
+	rpcconsensus "github.com/blocktop/go-rpc-client/consensus"
 )
 
 func init() {

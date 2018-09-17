@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	rpcconsensus "github.com/blckit/go-rpc-client/consensus"
+	rpcconsensus "github.com/blocktop/go-rpc-client/consensus"
 	mtr "github.com/rcrowley/go-metrics"
 )
 

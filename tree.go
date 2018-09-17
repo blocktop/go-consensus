@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	spec "github.com/blckit/go-spec"
+	spec "github.com/blocktop/go-spec"
 	"github.com/disiqueira/gotree"
 	"github.com/fatih/color"
 )

@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	spec "github.com/blckit/go-spec"
+	spec "github.com/blocktop/go-spec"
 	"github.com/spf13/viper"
 )
 
