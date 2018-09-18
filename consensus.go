@@ -27,17 +27,12 @@ import (
 	"github.com/spf13/viper"
 )
 
-const consensusBuffer = 2
-
 // Consensus tracks incoming blocks that are younger than Depth. It tracks
 // all the branches of blocks and prunes according to rules defined in the
 // CompareBlocks function. Client programs can retrieve the most favorable head
 // for its next block computation using the GetBestBranch method.
 type Consensus struct {
 	sync.Mutex
-
-	// The depth at which blocks are considered confirmed
-	ConsensusDepth uint
 
 	// The spec used to determine which blocks are in play
 	CompareBlocks spec.BlockComparator
@@ -62,6 +57,7 @@ type Consensus struct {
 
 	// Chan to send to when block is confirmed (removed as an old block)
 	confirm chan spec.Block
+	confirmLocal chan spec.Block
 
 	compete chan []spec.Block
 
@@ -86,7 +82,7 @@ func New(consensusDepth uint, blockComparator spec.BlockComparator) *Consensus {
 		panic(errors.New("blockComparator must be provided"))
 	}
 
-	c := &Consensus{ConsensusDepth: consensusDepth, CompareBlocks: blockComparator}
+	c := &Consensus{CompareBlocks: blockComparator}
 
 	c.blocks = make(map[string]spec.Block)
 	c.heads = make([]string, 0)
@@ -94,6 +90,7 @@ func New(consensusDepth uint, blockComparator spec.BlockComparator) *Consensus {
 	c.maxCompeted = int64(-1)
 	c.evaluate = make(chan spec.Block, 25)
 	c.confirm = make(chan spec.Block, 25)
+	c.confirmLocal = make(chan spec.Block, 25)
 	c.compete = make(chan []spec.Block, 1)
 
 	consensus = c
@@ -142,6 +139,10 @@ func (c *Consensus) GetConfirmChan() <-chan spec.Block {
 	return c.confirm
 }
 
+func (c *Consensus) GetConfirmLocalChan() <-chan spec.Block {
+	return c.confirm
+}
+
 func (c *Consensus) GetCompetitionChan() <-chan []spec.Block {
 	return c.compete
 }
@@ -157,7 +158,8 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	c.setSeen(block)
 
 	// make sure block is not too old
-	if c.getDepth(block) > int(c.ConsensusDepth)-consensusBuffer {
+	maxDepth := viper.GetInt("blockchain.consensus.depth") - viper.GetInt("blockchain.consensus.depthBuffer")
+	if c.getDepth(block) > maxDepth {
 		return false
 	}
 
@@ -248,6 +250,9 @@ func (c *Consensus) evaluateHead() {
 	if len(c.heads) == 0 {
 		return
 	}
+
+	c.Lock()
+	defer c.Unlock()
 
 	hs := make([]spec.Block, 0)
 	maxHead := uint64(0)
@@ -463,12 +468,14 @@ func (c *Consensus) removeOldBlocks() {
 	c.disqualifyOldBlocks(maxBlockNumber)
 	c.removeDisqualified(maxBlockNumber)
 
-	if maxBlockNumber < uint64(c.ConsensusDepth) {
+	consensusDepth := viper.GetInt("blockchain.consensus.depth")
+
+	if maxBlockNumber < uint64(consensusDepth) {
 		return // blockchain is two short to begin confirmation
 	}
 
 	confirmedCandidates := make([]spec.Block, 0)
-	minTrackedBlockNumber := maxBlockNumber - uint64(c.ConsensusDepth)
+	minTrackedBlockNumber := maxBlockNumber - uint64(consensusDepth)
 	for _, block := range c.blocks {
 		blockNumber := block.GetBlockNumber()
 		if blockNumber < minTrackedBlockNumber {
@@ -516,7 +523,7 @@ func (c *Consensus) removeDisqualified(maxBlockNumber uint64) {
 	for i := 0; i < len(c.disqualified); i++ {
 		block := c.disqualified[i]
 		blockNumber := block.GetBlockNumber()
-		if maxBlockNumber >= blockNumber && uint(maxBlockNumber-blockNumber) > c.ConsensusDepth {
+		if maxBlockNumber >= blockNumber && uint(maxBlockNumber-blockNumber) > uint(viper.GetInt("blockchain.consensus.depth")) {
 			go metrics.RemoveBlock(block)
 			c.disqualified = append(c.disqualified[:i], c.disqualified[i+1:]...)
 		}
@@ -526,13 +533,14 @@ func (c *Consensus) removeDisqualified(maxBlockNumber uint64) {
 func (c *Consensus) disqualifyOldBlocks(maxBlockNumber uint64) {
 	depthMap := make(map[uint64][]spec.Block, 0)
 	noChildren := make([]spec.Block, 0)
+	maxDepth := uint64(viper.GetInt("blockchain.consensus.depth") - viper.GetInt("blockchain.consensus.depthBuffer"))
 	for _, b := range c.blocks {
 		if c.isDisqualified(b) {
 			continue
 		}
 		blockNumber := b.GetBlockNumber()
 		depth := maxBlockNumber - blockNumber
-		if depth > uint64(c.ConsensusDepth)-consensusBuffer {
+		if depth > maxDepth {
 			if len(c.getChildren(b.GetID())) == 0 {
 				noChildren = append(noChildren, b)
 			}
@@ -574,7 +582,11 @@ func (c *Consensus) isLocal(blockID string) bool {
 }
 
 func (c *Consensus) confirmBlock(block spec.Block) {
-	c.confirm <- block
+	if c.isLocal(block.GetID()) {
+		c.confirmLocal <- block
+	} else {
+		c.confirm <- block
+	}
 
 	c.removeBlock(block.GetID(), false)
 	go metrics.RemoveBlock(block)
