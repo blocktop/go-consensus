@@ -55,17 +55,13 @@ type Consensus struct {
 	// Blocks disqualified from consideration
 	disqualified []spec.Block
 
-	// Chan to send to when block is confirmed (removed as an old block)
-	confirm chan spec.Block
-	confirmLocal chan spec.Block
-
-	compete chan []spec.Block
-
-	evaluate chan spec.Block
-
 	headTimer *time.Timer
 
 	bestHead spec.Block
+
+	confirm      chan<- spec.Block
+	confirmLocal chan<- spec.Block
+	compete      chan<- []spec.Block
 }
 
 var consensus *Consensus
@@ -88,17 +84,15 @@ func New(consensusDepth uint, blockComparator spec.BlockComparator) *Consensus {
 	c.heads = make([]string, 0)
 	c.alreadySeen = make(map[string][]string)
 	c.maxCompeted = int64(-1)
-	c.evaluate = make(chan spec.Block, 25)
-	c.confirm = make(chan spec.Block, 25)
-	c.confirmLocal = make(chan spec.Block, 25)
-	c.compete = make(chan []spec.Block, 1)
 
 	consensus = c
 	return c
 }
 
-func (c *Consensus) Start(ctx context.Context) {
-	go c.evaluateHeads(ctx)
+func (c *Consensus) Start(ctx context.Context, confirm chan<- spec.Block, confirmLocal chan<- spec.Block, compete chan<- []spec.Block) {
+	c.confirm = confirm
+	c.confirmLocal = confirmLocal
+	c.compete = compete
 	tree.start(ctx)
 }
 
@@ -133,18 +127,6 @@ func (c *Consensus) SetCompeted(head spec.Block) {
 	if int64(head.GetBlockNumber()) > c.maxCompeted {
 		c.maxCompeted = int64(head.GetBlockNumber())
 	}
-}
-
-func (c *Consensus) GetConfirmChan() <-chan spec.Block {
-	return c.confirm
-}
-
-func (c *Consensus) GetConfirmLocalChan() <-chan spec.Block {
-	return c.confirm
-}
-
-func (c *Consensus) GetCompetitionChan() <-chan []spec.Block {
-	return c.compete
 }
 
 // AddBlock adds the given block to the consensus tracking. Sibling and
@@ -224,35 +206,20 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 
 	// this has to be done after adding the block to c.blocks
 	if evaluate {
-		c.evaluate <- block
+		c.evaluateHeads()
 	}
 
 	return true
-}
-
-func (c *Consensus) evaluateHeads(ctx context.Context) {
-	
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-c.evaluate:
-			c.evaluateHead()
-		}
-	}
 }
 
 // GetBestBranch returns the most favorable branch for the client program to
 // compete for the next block. The method returns nil if there are no
 // favorable branches. Otherwise it returns the best branch as an array of
 // blocks with the head block as the zeroth element.
-func (c *Consensus) evaluateHead() {
+func (c *Consensus) evaluateHeads() {
 	if len(c.heads) == 0 {
 		return
 	}
-
-	c.Lock()
-	defer c.Unlock()
 
 	hs := make([]spec.Block, 0)
 	maxHead := uint64(0)
@@ -284,14 +251,13 @@ func (c *Consensus) evaluateHead() {
 		}
 	}
 
-	newBestHead := c.bestHead == nil
+	newBestHead := (c.bestHead == nil)
 	if !newBestHead && c.bestHead.GetBlockNumber() == maxHead {
 		bestHead = c.CompareBlocks([]spec.Block{bestHead, c.bestHead})
-		newBestHead = c.bestHead.GetID() != bestHead.GetID()
+		newBestHead = (c.bestHead.GetID() != bestHead.GetID())
 	}
 
 	branch := c.getBranch(bestHead)
-
 	if branch != nil && len(branch) > 0 && newBestHead {
 		if c.headTimer != nil {
 			c.headTimer.Stop()
@@ -299,11 +265,13 @@ func (c *Consensus) evaluateHead() {
 		}
 		now := time.Now().UnixNano()
 		latestTime := time.Duration(now) - viper.GetDuration("blockchain.blockInterval")
-		duration := time.Duration(bestHead.GetTimestamp()) * time.Millisecond - latestTime
-		if duration <= 0 {
+		wait := time.Duration(bestHead.GetTimestamp())*time.Millisecond - latestTime
+		if wait <= 0 {
+			// ready to compete
 			c.compete <- branch
 		} else {
-			c.headTimer = time.AfterFunc(duration, func() {
+			// compete after wait time
+			c.headTimer = time.AfterFunc(wait, func() {
 				c.compete <- branch
 				c.headTimer = nil
 			})
