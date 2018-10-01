@@ -17,7 +17,6 @@
 package consensus
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -26,7 +25,8 @@ import (
 )
 
 type metricItems struct {
-	DurationAtDepth  map[uint64]mtr.Histogram
+	BlockAddTime     mtr.Histogram
+	BlockConfirmTime mtr.Histogram
 	BlockDepthExit   mtr.Histogram
 	BlockDepthEntry  mtr.Histogram
 	TotalBlocks      mtr.Counter
@@ -52,7 +52,8 @@ func init() {
 	registry := mtr.NewPrefixedRegistry("consensus - ")
 	m.registry = registry
 
-	m.DurationAtDepth = make(map[uint64]mtr.Histogram, 0)
+	m.BlockAddTime = mtr.GetOrRegisterHistogram("block add time", registry, mtr.NewUniformSample(500))
+	m.BlockConfirmTime = mtr.GetOrRegisterHistogram("block add time", registry, mtr.NewUniformSample(500))
 	m.BlockDepthExit = mtr.GetOrRegisterHistogram("block depth at exit", registry, mtr.NewUniformSample(500))
 	m.BlockDepthEntry = mtr.GetOrRegisterHistogram("block depth at entry", registry, mtr.NewUniformSample(500))
 	m.TotalBlocks = mtr.GetOrRegisterCounter("total blocks", registry)
@@ -68,8 +69,8 @@ func (m *metricItems) updateTimestamp() {
 }
 
 func (m *metricItems) AddBlock(b spec.Block) {
-	blockID := b.GetID()
-	blockNumber := b.GetBlockNumber()
+	blockID := b.Hash()
+	blockNumber := b.BlockNumber()
 	if blockNumber > m.MaxBlockNumber {
 		m.MaxBlockNumber = blockNumber
 	}
@@ -97,10 +98,15 @@ func (m *metricItems) AddBlock(b spec.Block) {
 	tree.add(b)
 }
 
+func (m *metricItems) BlockAddDuration(duration int64) {
+	m.Lock()
+	defer m.Unlock()
+	m.BlockAddTime.Update(duration)
+}
+
+
 func (m *metricItems) DisqualifyBlock(b spec.Block) {
-	blockID := b.GetID()
-	blockNumber := b.GetBlockNumber()
-	depth := m.MaxBlockNumber - blockNumber
+	blockID := b.Hash()
 
 	m.Lock()
 	defer m.Unlock()
@@ -110,16 +116,13 @@ func (m *metricItems) DisqualifyBlock(b spec.Block) {
 		return
 	}
 
-	duration := time.Now().UnixNano() - statB.timeEntered
-	m.blockExit(depth, duration)
-
 	m.updateTimestamp()
 
 	tree.disqualify(b)
 }
 
 func (m *metricItems) RemoveBlock(b spec.Block) {
-	blockID := b.GetID()
+	blockID := b.Hash()
 
 	m.Lock()
 	defer m.Unlock()
@@ -133,19 +136,12 @@ func (m *metricItems) RemoveBlock(b spec.Block) {
 
 	if !statB.disqualifed {
 		duration := time.Now().UnixNano() - statB.timeEntered
-		depth := m.MaxBlockNumber - b.GetBlockNumber()
-		m.blockExit(depth, duration)
+		depth := m.MaxBlockNumber - b.BlockNumber()
+		m.BlockDepthExit.Update(int64(depth))
+		m.BlockConfirmTime.Update(duration)
 	}
 
 	delete(m.statBlocks, blockID)
 
 	tree.remove(b)
-}
-
-func (m *metricItems) blockExit(depth uint64, duration int64) {
-	m.BlockDepthExit.Update(int64(depth))
-
-	hist := mtr.GetOrRegisterHistogram(fmt.Sprintf("duration to depth %d", depth), m.registry, mtr.NewUniformSample(500))
-	hist.Update(duration / int64(time.Millisecond))
-	m.DurationAtDepth[depth] = hist
 }

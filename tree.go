@@ -17,12 +17,13 @@
 package consensus
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
+
+	push "github.com/blocktop/go-push-components"
 
 	spec "github.com/blocktop/go-spec"
 	"github.com/disiqueira/gotree"
@@ -35,7 +36,7 @@ type consensusTree struct {
 	MinBlockNumber  uint64       `json:"minBlockNumber,string"`
 	MaxBlockNumber  uint64       `json:"maxBlockNumber,string"`
 	UpdateTimestamp int64        `json:"updateTimestamp"` //millisecond
-	queue           chan *updateTask
+	queue           *push.PushQueue
 	blocks          map[string]*treeBlock
 }
 
@@ -62,7 +63,6 @@ const (
 )
 
 var tree *consensusTree
-var TreeJSON chan []byte = make(chan []byte, 1)
 
 func init() {
 	t := &consensusTree{}
@@ -70,11 +70,10 @@ func init() {
 	t.Roots = make([]*treeBlock, 0)
 	t.UpdateTimestamp = time.Now().UnixNano() / int64(time.Millisecond)
 	t.blocks = make(map[string]*treeBlock, 0)
-	t.queue = make(chan *updateTask, 500)
-}
-
-func (t *consensusTree) start(ctx context.Context) {
-	go t.processLoop(ctx)
+	t.queue = push.NewPushQueue(1, 1000, func(item push.QueueItem) {
+		t.processQueueItem(item.(*updateTask))
+	})
+	t.queue.Start()
 }
 
 func (t *consensusTree) getJSON() (string, error) {
@@ -148,26 +147,15 @@ func (t *consensusTree) sortForText(blocks []*treeBlock) []*treeBlock {
 }
 
 func (t *consensusTree) add(b spec.Block) {
-	t.queue <- &updateTask{taskType: taskTypeAdd, block: b}
+	t.queue.Put(&updateTask{taskType: taskTypeAdd, block: b})
 }
 
 func (t *consensusTree) disqualify(b spec.Block) {
-	t.queue <- &updateTask{taskType: taskTypeDisqualify, block: b}
+	t.queue.Put(&updateTask{taskType: taskTypeDisqualify, block: b})
 }
 
 func (t *consensusTree) remove(b spec.Block) {
-	t.queue <- &updateTask{taskType: taskTypeRemove, block: b}
-}
-
-func (t *consensusTree) processLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case task := <-t.queue:
-			t.processQueueItem(task)
-		}
-	}
+	t.queue.Put(&updateTask{taskType: taskTypeRemove, block: b})
 }
 
 func (t *consensusTree) processQueueItem(task *updateTask) {
@@ -185,12 +173,12 @@ func (t *consensusTree) processQueueItem(task *updateTask) {
 
 func (t *consensusTree) addTask(b spec.Block) {
 	block := &treeBlock{
-		ID:          b.GetID(),
-		Name:        fmt.Sprintf("block %d: %s", b.GetBlockNumber(), b.GetID()[:6]),
-		parentID:    b.GetParentID(),
-		BlockNumber: b.GetBlockNumber(),
+		ID:          b.Hash(),
+		Name:        fmt.Sprintf("block %d: %s", b.BlockNumber(), b.Hash()[:6]),
+		parentID:    b.ParentHash(),
+		BlockNumber: b.BlockNumber(),
 		Children:    make([]*treeBlock, 0),
-		IsLocal:     consensus.isLocal(b.GetID())}
+		IsLocal:     consensus.isLocal(b.Hash())}
 
 	t.Lock()
 	defer t.Unlock()
@@ -222,7 +210,7 @@ func (t *consensusTree) addTask(b spec.Block) {
 }
 
 func (t *consensusTree) disqualifyTask(b spec.Block) {
-	blockID := b.GetID()
+	blockID := b.Hash()
 
 	t.Lock()
 	defer t.Unlock()
@@ -243,7 +231,7 @@ func (t *consensusTree) disqualifyRecurse(block *treeBlock) {
 }
 
 func (t *consensusTree) removeTask(b spec.Block) {
-	blockID := b.GetID()
+	blockID := b.Hash()
 
 	t.Lock()
 	defer t.Unlock()
