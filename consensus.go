@@ -443,6 +443,9 @@ func (c *Consensus) disqualifyBlock(cblock *consensusBlock) {
 }
 
 func (c *Consensus) confirmBlocks() {
+	if c.root == nil || c.root.cblock == nil {
+		return
+	}
 	maxBlockNumber := c.getMaxBlockNumber()
 	minBlockNumber := c.root.cblock.blockNumber
 
@@ -457,6 +460,9 @@ func (c *Consensus) confirmBlocks() {
 	confirmCount := depth - uint64(consensusDepth-1)
 
 	for confirmCount > 0 {
+		if c.root == nil || c.root.cblock == nil {
+			return
+		}
 		maxChildBlockNumber, maxChild := c.analyzeRoot(c.root.cblock, maxBlockNumber)
 		if maxChildBlockNumber >= maxBlockNumber {
 			rootBlock := c.root.cblock
