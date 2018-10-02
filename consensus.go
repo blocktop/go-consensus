@@ -272,7 +272,8 @@ func (c *Consensus) evaluateHeads() {
 		//		fmt.Printf("%v\n", c.root)
 		//		fmt.Printf("%v\n", chead.root)
 
-		if c.root != nil && c.root.cblock != nil && equal(chead.root.cblock, c.root.cblock) {
+		if c.root != nil && c.root.cblock != nil && chead.root != nil && chead.root.cblock != nil && 
+		equal(chead.root.cblock, c.root.cblock) {
 			if chead.blockNumber > maxRootHead || chead.blockNumber == 0 {
 				maxRootHead = chead.blockNumber
 				bestRootHead = chead
@@ -401,7 +402,7 @@ func (c *Consensus) removeBlock(cblock *consensusBlock, disqualify bool) {
 	}
 
 	// If this block was a root, then we are blowing up the tree.
-	if c.root.cblock != nil && c.root.cblock.blockID == blockID {
+	if c.root != nil && c.root.cblock != nil && c.root.cblock.blockID == blockID {
 		panic("removing the root")
 	}
 
