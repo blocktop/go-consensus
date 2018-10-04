@@ -22,8 +22,8 @@ import (
 	"time"
 
 	spec "github.com/blocktop/go-spec"
-	"github.com/spf13/viper"
 	"github.com/mxmCherry/movavg"
+	"github.com/spf13/viper"
 )
 
 // Consensus tracks incoming blocks that are younger than Depth. It tracks
@@ -60,14 +60,15 @@ type consensusBlock struct {
 }
 
 // consensusRoot carries a pointer to the current root block of the
-// consensus tree. Since we are constantly confirming blocks, the 
+// consensus tree. Since we are constantly confirming blocks, the
 // block pointed to in this struct will continually change, and all
 // blocks that point to this struct will immediately reflect that change.
 type consensusRoot struct {
-	cblock *consensusBlock
+	cblock               *consensusBlock
 	consecutiveLocalHits uint
-	lastHitTimestamp int64
-	hitRate *movavg.SMA  // in µs/block
+	lastHitTimestamp     int64
+	hitRate              *movavg.SMA // in µs/block
+	hits                 uint64
 }
 
 // compile-time interface check
@@ -98,7 +99,7 @@ func NewConsensus(blockComparator spec.BlockComparator) *Consensus {
 	c.localBlocks = &sync.Map{}
 	c.competed = &sync.Map{}
 	c.disqualified = &sync.Map{}
-	
+
 	consensusDepth = viper.GetInt("blockchain.consensus.depth")
 	consensusBuffer = viper.GetInt("blockchain.consensus.buffer")
 	maxDepth = consensusDepth - consensusBuffer
@@ -137,7 +138,7 @@ func (c *Consensus) SetCompeted(head spec.Block) {
 
 // AddBlock adds the given block to the consensus tracking. Sibling and
 // children branches are pruned according to the rules in the spec.BlockComparator
-// function. 
+// function.
 func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	startTime := time.Now().UnixNano()
 
@@ -153,7 +154,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	if blockDepth > maxDepth-1 {
 		return false
 	}
-	
+
 	blockID := block.Hash()
 	parentID := block.ParentHash()
 
@@ -169,7 +170,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	parent := getBlock(c.blocks, parentID)
 	cblock.parent = parent
 
-	// If we are tracking the parent, then check to make sure the 
+	// If we are tracking the parent, then check to make sure the
 	// block number has incremented by only 1. Ignore the block otherwise.
 	if parent != nil && block.BlockNumber() != parent.blockNumber+1 {
 		return false
@@ -238,7 +239,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 		badBlockNumber := false
 		orphans.Range(func(oid, o interface{}) bool {
 			corphan := o.(*consensusBlock)
-			if corphan.blockNumber != block.BlockNumber() + 1 {
+			if corphan.blockNumber != block.BlockNumber()+1 {
 				badBlockNumber = true
 				return false
 			}
@@ -263,8 +264,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 		cblock.children = &sync.Map{}
 	}
 
-
-	// Now that orphans are reattached to parents, we can deal with 
+	// Now that orphans are reattached to parents, we can deal with
 	// siblings. We need orphans attached in case the next line
 	// disqualifies the new block thereby disqualifying the former orphans.
 	// Compare all siblings and keep only the most favorable one.
@@ -301,7 +301,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	// to prevent an echo chamber.
 	recordHit(cblock.root, isLocal)
 
-	// Save a record of local blocks so that they can be identified 
+	// Save a record of local blocks so that they can be identified
 	// upon confirmation.
 	if isLocal {
 		c.localBlocks.Store(blockID, cblock)
@@ -317,11 +317,11 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	// Add the new block to the main block map.
 	c.blocks.Store(blockID, cblock)
 
-	// Confirm any blocks that are deeper than threshold.
-	c.confirmBlocks()
-
 	// Evaluate heads for next round of competition.
 	c.evaluateHeads()
+
+	// Confirm any blocks that are deeper than threshold.
+	c.confirmBlocks()
 
 	duration := time.Now().UnixNano() - startTime
 	metrics.BlockAddDuration(duration)
@@ -330,21 +330,22 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 }
 
 type evalHead struct {
-	chead *consensusBlock
-	hitRate *movavg.SMA
+	chead          *consensusBlock
+	hitRate        *movavg.SMA
+	hits           uint64
 	maxBlockNumber uint64
 }
 
 // evaluateHeads determines the best head for the blockchain to generate
-// the next block against. It places the entire branch, from root to 
+// the next block against. It places the entire branch, from root to
 // head into a queue for the blockchain to pickup when ready. The zeroth
 // element of the branch is the head.
 //
 // The function favors the head(s) of the currently confirming root block.
 // However, if that root is no longer getting the majority of attention
-// from the rest of the network, then c.evaluateHeads may decide to 
+// from the rest of the network, then c.evaluateHeads may decide to
 // switch roots to a more active one.
-// 
+//
 // This function runs within the mutex lock of c.AddBlock
 func (c *Consensus) evaluateHeads() {
 	var hasHead bool
@@ -354,7 +355,7 @@ func (c *Consensus) evaluateHeads() {
 
 	// Find both the best head attached to the confirming root, and the
 	// best heads not attached to the confirming root.
-	
+
 	c.heads.Range(func(hid interface{}, cb interface{}) bool {
 		hasHead = true
 		chead := cb.(*consensusBlock)
@@ -377,7 +378,11 @@ func (c *Consensus) evaluateHeads() {
 			rootID := chead.root.cblock.blockID
 			bestHead := bestHeads[rootID]
 			if bestHead == nil {
-				bestHeads[rootID] = &evalHead{chead: chead, hitRate: chead.root.hitRate, maxBlockNumber: blockNumber}
+				bestHeads[rootID] = &evalHead{
+					chead: chead, 
+					hitRate: chead.root.hitRate, 
+					hits: chead.root.hits,
+					maxBlockNumber: blockNumber}
 			} else if blockNumber > bestHead.maxBlockNumber {
 				bestHead.maxBlockNumber = blockNumber
 			}
@@ -391,7 +396,7 @@ func (c *Consensus) evaluateHeads() {
 	// Favor the head from the root we are currently tracking,
 	// unless it has too many consecutive local hits (echo chamber) or
 	// has a lower hit rate than another head. If those conditions
-	// happen, then we switch confirming roots and start building on 
+	// happen, then we switch confirming roots and start building on
 	// a differnt fork of the blockchain.
 	var bestAlternateHead *consensusBlock
 	croot := c.confirmingRoot
@@ -401,7 +406,7 @@ func (c *Consensus) evaluateHeads() {
 
 	// Echo chamber test
 	if !switchHeads {
-		switchHeads = croot.consecutiveLocalHits > uint(consensusDepth * 20/100)  // 20% consensus depth TODO make a config item
+		switchHeads = croot.consecutiveLocalHits > uint(consensusDepth*20/100) // 20% consensus depth TODO make a config item
 	}
 
 	// Hit rate test
@@ -409,12 +414,13 @@ func (c *Consensus) evaluateHeads() {
 		bestHitRate := float64(10e20) // very large so we can find min
 		for _, eHead := range bestHeads {
 			hitRate := eHead.hitRate.Avg()
-			if hitRate < bestHitRate {
+			if hitRate < bestHitRate && hitRate > 0 && eHead.hits > uint64(consensusDepth * 10/100) {  // hitRate == 0 when only one block has been added to the root
 				bestAlternateHead = eHead.chead
 				bestHitRate = hitRate
 			}
 		}
-		switchHeads = switchHeads || bestHitRate < croot.hitRate.Avg() * 0.5  // 50% less than the confirming root's hit rate
+		crootHitRate := croot.hitRate.Avg()
+		switchHeads = switchHeads || bestHitRate < crootHitRate*0.5 // 50% less than the confirming root's hit rate
 	}
 
 	bestHead := bestRootHead
@@ -594,12 +600,12 @@ func (c *Consensus) confirmBlocks() {
 		return
 	}
 
-	// How far past the confirmation threshold are we? We can confirm any 
+	// How far past the confirmation threshold are we? We can confirm any
 	// blocks past this threshold.
 	confirmCount := depth - uint64(consensusDepth-1)
 
 	for confirmCount > 0 {
-		
+
 		// If the root has more than one child, then we need to determine which
 		// one to pass confirming root privilege to. The other ones will be
 		// removed by the following call.
@@ -629,9 +635,9 @@ func (c *Consensus) analyzeRoot(cblock *consensusBlock, maxBlockNumber uint64) (
 	if !hasChild(cblock) {
 		if cblock.blockNumber < bufferZoneLow {
 
-			// This block is on the threshold of being confirmed and it has no children. 
+			// This block is on the threshold of being confirmed and it has no children.
 			// Since it is blelow this threshold, it is impossible for new blocks to be
-			// added to it as children, so it can safely be removed. But we need to check 
+			// added to it as children, so it can safely be removed. But we need to check
 			// if it is actually the confirming block right now. If so, we need to nilify
 			// that and let c.evaluateHeads determine the new confirming block. It should
 			// be very unusual to end up doing that.
@@ -654,7 +660,7 @@ func (c *Consensus) analyzeRoot(cblock *consensusBlock, maxBlockNumber uint64) (
 		child := ch.(*consensusBlock)
 		childHeight, _ := c.analyzeRoot(child, maxBlockNumber)
 
-    if childHeight > maxChildBlockNumber {
+		if childHeight > maxChildBlockNumber {
 			maxChildBlockNumber = childHeight
 			maxChild = child
 		}
@@ -667,7 +673,7 @@ func (c *Consensus) removeDisqualified(maxBlockNumber uint64) {
 	c.disqualified.Range(func(bid interface{}, cb interface{}) bool {
 		block := cb.(*consensusBlock).block
 		blockNumber := block.BlockNumber()
-		if maxBlockNumber >= blockNumber && int(maxBlockNumber-blockNumber) > maxDepth + 1 {
+		if maxBlockNumber >= blockNumber && int(maxBlockNumber-blockNumber) > maxDepth+1 {
 			go metrics.RemoveBlock(block)
 			c.disqualified.Delete(bid.(string))
 		}
@@ -740,11 +746,11 @@ func (c *Consensus) setRoot(cblock *consensusBlock, croot *consensusRoot) {
 		c.setRoot(cchild, croot)
 		return true
 	})
-	
+
 	if cblock.blockID == croot.cblock.blockID {
 		oldRoot := cblock.root
 		cblock.root = croot
-		oldRoot.cblock = nil	
+		oldRoot.cblock = nil
 	} else {
 		cblock.root = nil
 	}
@@ -792,6 +798,7 @@ func equalCBlocks(cb1, cb2 *consensusBlock) bool {
 func recordHit(root *consensusRoot, isLocal bool) {
 	now := time.Now().UnixNano()
 	if root.lastHitTimestamp == 0 {
+		root.hits = 0
 		root.consecutiveLocalHits = 0
 		root.lastHitTimestamp = now
 	}
@@ -801,9 +808,9 @@ func recordHit(root *consensusRoot, isLocal bool) {
 		root.consecutiveLocalHits = 0
 	}
 
-	deltaT := (now - root.lastHitTimestamp)/int64(time.Microsecond)
+	deltaT := (now - root.lastHitTimestamp) / int64(time.Microsecond)
 	root.hitRate.Add(float64(deltaT))
-
 	root.lastHitTimestamp = now
 
+	root.hits++
 }
