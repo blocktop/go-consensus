@@ -374,7 +374,7 @@ func (c *Consensus) evaluateHeads() {
 				bestRootHead = chead
 			}
 		} else {
-			// Otherwise find the maximum block number under each alternate root.
+			// Find the maximum block number under each alternate root.
 			rootID := chead.root.cblock.blockID
 			bestHead := bestHeads[rootID]
 			if bestHead == nil {
@@ -414,13 +414,16 @@ func (c *Consensus) evaluateHeads() {
 		bestHitRate := float64(10e20) // very large so we can find min
 		for _, eHead := range bestHeads {
 			hitRate := eHead.hitRate.Avg()
-			if hitRate < bestHitRate && hitRate > 0 && eHead.hits > uint64(consensusDepth * 10/100) {  // hitRate == 0 when only one block has been added to the root
+			// We consider this alternate head only if its root's hit rate is greater than
+			// zero (hitrate is zero when root and head are same) and the number of
+			// hits on this root is more than 10% of consensus depth (it has been around for
+			// a few rounds).
+			if hitRate < bestHitRate && hitRate > 0 && eHead.hits > uint64(consensusDepth * 10/100) {  
 				bestAlternateHead = eHead.chead
 				bestHitRate = hitRate
 			}
 		}
-		crootHitRate := croot.hitRate.Avg()
-		switchHeads = switchHeads || bestHitRate < crootHitRate*0.5 // 50% less than the confirming root's hit rate
+		switchHeads = switchHeads || bestHitRate < croot.hitRate.Avg()*0.5 // 50% faster than the confirming root's hit rate
 	}
 
 	bestHead := bestRootHead
