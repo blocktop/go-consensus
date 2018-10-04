@@ -406,15 +406,15 @@ func (c *Consensus) evaluateHeads() {
 
 	// Hit rate test
 	if len(bestHeads) > 0 {
-		var bestHitRate float64
+		bestHitRate := float64(10e20) // very large so we can find min
 		for _, eHead := range bestHeads {
 			hitRate := eHead.hitRate.Avg()
-			if hitRate > bestHitRate {
+			if hitRate < bestHitRate {
 				bestAlternateHead = eHead.chead
 				bestHitRate = hitRate
 			}
 		}
-		switchHeads = switchHeads || bestHitRate > croot.hitRate.Avg() * 1.5  // 50% greater than the confirming root's hit rate
+		switchHeads = switchHeads || bestHitRate < croot.hitRate.Avg() * 0.5  // 50% less than the confirming root's hit rate
 	}
 
 	bestHead := bestRootHead
