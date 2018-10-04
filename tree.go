@@ -174,7 +174,7 @@ func (t *consensusTree) processQueueItem(task *updateTask) {
 func (t *consensusTree) addTask(b spec.Block) {
 	block := &treeBlock{
 		ID:          b.Hash(),
-		Name:        fmt.Sprintf("block %d: %s", b.BlockNumber(), b.Hash()[:6]),
+		Name:        fmt.Sprintf("block %d:%s", b.BlockNumber(), b.Hash()[:6]),
 		parentID:    b.ParentHash(),
 		BlockNumber: b.BlockNumber(),
 		Children:    make([]*treeBlock, 0),
