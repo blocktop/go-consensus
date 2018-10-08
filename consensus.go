@@ -23,8 +23,8 @@ import (
 
 	"github.com/golang/glog"
 
-	spec "github.com/blocktop/go-spec"
 	kernel "github.com/blocktop/go-kernel"
+	spec "github.com/blocktop/go-spec"
 	"github.com/mxmCherry/movavg"
 	"github.com/spf13/viper"
 )
@@ -108,8 +108,14 @@ func NewConsensus(blockComparator spec.BlockComparator) *Consensus {
 	kernel.OnInit(func() {
 		consensusTime := viper.GetDuration("blockchain.consensus.time")
 		blockInterval := kernel.Time().BlockInterval()
-		consensusDepth = int(consensusTime/blockInterval)
-		consensusBuffer = consensusDepth * 10/100   // 10% of depth
+		consensusDepth = int(consensusTime / blockInterval)
+		if consensusDepth < 5 {
+			consensusDepth = 5
+		}
+		consensusBuffer = consensusDepth * 10 / 100 // 10% of depth
+		if consensusBuffer < 2 {
+			consensusBuffer = 2
+		}
 		maxDepth = consensusDepth - consensusBuffer
 
 		glog.Infof("Consensus depth is %d blocks", consensusDepth)
@@ -176,7 +182,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 	block := c.compareBlocks(blocks)
 	blocki := index[block.Hash()]
 	disqualified = append(blocks[:blocki], blocks[blocki+1:]...)
-	
+
 	var logLocal string
 	if isLocal {
 		logLocal = "local "
@@ -191,7 +197,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 		return nil, blocks, nil
 	}
 
-	// If block is too old then ignore it. 
+	// If block is too old then ignore it.
 	// NEEDSWORK: global maximum or root's branch maximum?
 	maxBlockNumber := c.getMaxBlockNumber()
 	if maxBlockNumber >= block.BlockNumber() {
@@ -677,7 +683,7 @@ func (c *Consensus) analyzeRoot(cblock *consensusBlock) (uint64, *consensusBlock
 	}
 
 	maxChildBlockNumber := uint64(0)
-	maxChildBlockNumbers := make(map[string]uint64)  // [childID]maxChildBlockNumber
+	maxChildBlockNumbers := make(map[string]uint64) // [childID]maxChildBlockNumber
 	var maxChild *consensusBlock
 
 	// Recurse children to find the maximum block number in the branch.
