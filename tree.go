@@ -70,7 +70,7 @@ func init() {
 	t.Roots = make([]*treeBlock, 0)
 	t.UpdateTimestamp = time.Now().UnixNano() / int64(time.Millisecond)
 	t.blocks = make(map[string]*treeBlock, 0)
-	t.queue = push.NewPushQueue(1, 1000, func(item push.QueueItem) {
+	t.queue = push.NewPushQueue(1, 1000, func(item interface{}) {
 		t.processQueueItem(item.(*updateTask))
 	})
 	t.queue.Start()

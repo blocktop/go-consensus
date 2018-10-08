@@ -24,6 +24,7 @@ import (
 	"github.com/golang/glog"
 
 	spec "github.com/blocktop/go-spec"
+	kernel "github.com/blocktop/go-kernel"
 	"github.com/mxmCherry/movavg"
 	"github.com/spf13/viper"
 )
@@ -81,7 +82,6 @@ var consensus *Consensus
 var maxDepth int
 var consensusDepth int
 var consensusBuffer int
-var blockInterval time.Duration
 var addDisqualified bool
 var hitRateSMAWindow int
 
@@ -104,12 +104,19 @@ func NewConsensus(blockComparator spec.BlockComparator) *Consensus {
 	c.disqualified = &sync.Map{}
 	c.competition = &Competition{}
 
-	consensusDepth = viper.GetInt("blockchain.consensus.depth")
-	consensusBuffer = viper.GetInt("blockchain.consensus.buffer")
-	maxDepth = consensusDepth - consensusBuffer
-	blockInterval = viper.GetDuration("blockchain.blockInterval")
 	addDisqualified = viper.GetBool("blockchain.metrics.trackall")
-	hitRateSMAWindow = int(blockInterval/time.Microsecond) * consensusDepth
+	kernel.OnInit(func() {
+		consensusTime := viper.GetDuration("blockchain.consensus.time")
+		blockInterval := kernel.Time().BlockInterval()
+		consensusDepth = int(consensusTime/blockInterval)
+		consensusBuffer = consensusDepth * 10/100   // 10% of depth
+		maxDepth = consensusDepth - consensusBuffer
+
+		glog.Infof("Consensus depth is %d blocks", consensusDepth)
+		glog.Infof("Consensus buffer is %d blocks", consensusBuffer)
+
+		hitRateSMAWindow = int(consensusDepth * 2)
+	})
 
 	consensus = c
 	return c
@@ -123,7 +130,7 @@ func (c *Consensus) OnLocalBlockConfirmed(f spec.BlockConfirmationHandler) {
 	c.onLocalBlockConfirmed = f
 }
 
-func (c *Consensus) Competition() spec.Competition {
+func (c *Consensus) Evaluate() spec.Competition {
 	c.evaluateHeads()
 	return c.competition
 }
@@ -144,9 +151,32 @@ func (c *Consensus) SetCompeted(head spec.Block) {
 // AddBlock adds the given block to the consensus tracking. Sibling and
 // children branches are pruned according to the rules in the spec.BlockComparator
 // function.
-func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
+func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Block, disqualified []spec.Block, err error) {
 	startTime := time.Now().UnixNano()
 
+	// All blocks should have same parentID and blockNumber
+	var parentID string
+	var blockNumber uint64
+	var sema bool
+	index := make(map[string]int)
+	for i, b := range blocks {
+		if !sema {
+			parentID = b.ParentHash()
+			blockNumber = b.BlockNumber()
+			sema = true
+		} else {
+			if b.ParentHash() != parentID || b.BlockNumber() != uint64(blockNumber) {
+				return nil, nil, errors.New("all blocks must have same parent hash and block number")
+			}
+		}
+		index[b.Hash()] = i
+	}
+
+	// Get the winning block amongst these siblings.
+	block := c.compareBlocks(blocks)
+	blocki := index[block.Hash()]
+	disqualified = append(blocks[:blocki], blocks[blocki+1:]...)
+	
 	var logLocal string
 	if isLocal {
 		logLocal = "local "
@@ -158,7 +188,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 
 	if c.WasSeen(block) {
 		glog.V(2).Infof("AddBlock: leaving, already saw block %d:%s", block.BlockNumber(), block.Hash()[:6])
-		return false
+		return nil, blocks, nil
 	}
 
 	// If block is too old then ignore it. 
@@ -168,12 +198,11 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 		blockDepth := int(maxBlockNumber - block.BlockNumber())
 		if blockDepth > maxDepth-1 {
 			glog.V(2).Infof("AddBlock: leaving, depth %d to great of block %d:%s", blockDepth, block.BlockNumber(), block.Hash()[:6])
-			return false
+			return nil, blocks, nil
 		}
 	}
 
 	blockID := block.Hash()
-	parentID := block.ParentHash()
 
 	// The ConsensusBlock is a wrapper for the block while it is
 	// being tracking within the consensus system.
@@ -191,7 +220,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	// block number has incremented by only 1. Ignore the block otherwise.
 	if parent != nil && block.BlockNumber() != parent.blockNumber+1 {
 		glog.V(1).Infof("AddBlock: leaving, parent block %d, new block %d:%s", parent.blockNumber, block.BlockNumber(), block.Hash()[:6])
-		return false
+		return nil, blocks, nil
 	}
 
 	// If parent was already eliminated, then new block is also eliminated,
@@ -202,7 +231,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 			go metrics.DisqualifyBlock(block)
 		}
 		glog.V(1).Infof("AddBlock: leaving, disqualified parent %s of block %d:%s", parentID[:6], block.BlockNumber(), block.Hash()[:6])
-		return false
+		return nil, blocks, nil
 	}
 
 	var siblings []*consensusBlock
@@ -253,13 +282,12 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 		for _, corphan := range orphans {
 			if corphan.blockNumber != block.BlockNumber()+1 {
 				badBlockNumber = true
-				return false
+				break
 			}
-			return true
 		}
 		if badBlockNumber {
 			glog.V(1).Infof("AddBlock: leaving, incorrect block number relative to children of block %d:%s", block.BlockNumber(), block.Hash()[:6])
-			return false
+			return nil, blocks, nil
 		}
 		// Evaluate children against each other and eliminate unfavoarables.
 		remainingOrphan := c.disqualifyUnfavorables(orphans, true)
@@ -284,7 +312,6 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	// Compare all siblings and keep only the most favorable one.
 	// Note this could displace the current best head or the
 	// branch leading to it.
-	blockNumber := block.BlockNumber()
 	favorableSibling := c.disqualifyUnfavorables(siblings, true)
 	if favorableSibling != nil && parent != nil {
 		parent.children = []*consensusBlock{favorableSibling}
@@ -300,7 +327,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 			go metrics.DisqualifyBlock(block)
 		}
 		glog.V(1).Infof("AddBlock: leaving, sibling was more favorable than block %d:%s", blockNumber, block.Hash()[:6])
-		return false
+		return nil, blocks, nil
 	}
 
 	// ***
@@ -347,7 +374,7 @@ func (c *Consensus) AddBlock(block spec.Block, isLocal bool) (added bool) {
 	metrics.BlockAddDuration(duration)
 
 	glog.V(1).Infof("AddBlock: leaving, success for block %d:%s", block.BlockNumber(), block.Hash()[:6])
-	return true
+	return block, disqualified, nil
 }
 
 type evalHead struct {
@@ -841,7 +868,7 @@ func recordHit(root *consensusRoot, isLocal bool) {
 		root.consecutiveLocalHits = 0
 	}
 
-	deltaT := (now - root.lastHitTimestamp) / int64(time.Microsecond)
+	deltaT := (now - root.lastHitTimestamp)
 	root.hitRate.Add(float64(deltaT))
 	root.lastHitTimestamp = now
 
