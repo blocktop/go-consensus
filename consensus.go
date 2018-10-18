@@ -441,7 +441,8 @@ func (c *Consensus) evaluateHeads() {
 
 	// Echo chamber test
 	if !switchHeads {
-		switchHeads = croot.consecutiveLocalHits > uint(consensusDepth*20/100) // 20% consensus depth TODO make a config item
+		// TODO: need to wait for kernel to give green light to switch
+		//switchHeads = croot.consecutiveLocalHits > uint(consensusDepth*20/100) // 20% consensus depth TODO make a config item
 		if switchHeads {
 			glog.V(2).Infof("evaluateHeads: might switch heads, confirming root had %d consencutive local hits", croot.consecutiveLocalHits)
 		}
@@ -467,17 +468,17 @@ func (c *Consensus) evaluateHeads() {
 				glog.V(2).Infof("evaluateHeads: maybe switching heads, alternate root had %f vs. %f hits rate", bestHitRate, croot.hitRate.Avg())
 			}
 
-			switchHeads = switchHeads || betterHitRate // 50% faster than the confirming root's hit rate
+			// TODO: need to wait for kernel to give the green light to switch
+			//switchHeads = switchHeads || betterHitRate // 50% faster than the confirming root's hit rate
 		}
 	}
 
 	bestHead := bestRootHead
 	var switchedHeads bool
 	if switchHeads && bestAlternateHead != nil {
-		//TODO: only do this if kernel gives green light
-		//glog.V(2).Infoln("evaluateHeads: switching to alternative head")
-		//bestHead = bestAlternateHead
-		//switchedHeads = true
+		glog.V(2).Infoln("evaluateHeads: switching to alternative head")
+		bestHead = bestAlternateHead
+		switchedHeads = true
 	}
 
 	// Unable to find a head for competition.
