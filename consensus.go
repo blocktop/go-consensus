@@ -155,6 +155,8 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 		index[b.Hash()] = i
 	}
 
+	glog.V(2).Infof("AddBlocks: comparing %d blocks", len(blocks))
+
 	// Get the winning block amongst these siblings.
 	specblock := c.compareBlocks(blocks)
 	blockID := specblock.Hash()
@@ -167,13 +169,13 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 	if isLocal {
 		logLocal = "local "
 	}
-	glog.V(2).Infof("AddBlock: Entering %sblock %d:%s", logLocal, blockNumber, blockID[:6])
+	glog.V(2).Infof("AddBlocks: Entering %sblock %d:%s", logLocal, blockNumber, blockID[:6])
 
 	c.Lock()
 	defer c.Unlock()
 
 	if c.WasSeen(specblock) {
-		glog.V(2).Infof("AddBlock: leaving, already saw block %d:%s", blockNumber, blockID[:6])
+		glog.V(2).Infof("AddBlocks: leaving, already saw block %d:%s", blockNumber, blockID[:6])
 		return nil, blocks, nil
 	}
 
@@ -183,7 +185,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 	if maxBlockNumber >= blockNumber {
 		blockDepth := int(maxBlockNumber - blockNumber)
 		if blockDepth > maxDepth-1 {
-			glog.V(2).Infof("AddBlock: leaving, depth %d to great of block %d:%s", blockDepth, blockNumber, blockID[:6])
+			glog.V(2).Infof("AddBlocks: leaving, depth %d to great of block %d:%s", blockDepth, blockNumber, blockID[:6])
 			return nil, blocks, nil
 		}
 	}
@@ -203,7 +205,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 	// If we are tracking the parent, then check to make sure the
 	// block number has incremented by only 1. Ignore the block otherwise.
 	if parent != nil && blockNumber != parent.blockNumber+1 {
-		glog.V(1).Infof("AddBlock: leaving, parent block %d, new block %d:%s", parent.blockNumber, blockNumber, blockID[:6])
+		glog.V(1).Infof("AddBlocks: leaving, parent block %d, new block %d:%s", parent.blockNumber, blockNumber, blockID[:6])
 		return nil, blocks, nil
 	}
 
@@ -214,7 +216,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 			metrics.AddBlock(specblock)
 			go metrics.DisqualifyBlock(specblock)
 		}
-		glog.V(1).Infof("AddBlock: leaving, disqualified parent %s of block %d:%s", parentID[:6], blockNumber, blockID[:6])
+		glog.V(1).Infof("AddBlocks: leaving, disqualified parent %s of block %d:%s", parentID[:6], blockNumber, blockID[:6])
 		return nil, blocks, nil
 	}
 
@@ -230,7 +232,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 		// If this is the genesis block and no other consensus root has been
 		// set yet, the make this block the confirming root.
 		if blockNumber == 0 && c.confirmingRoot == nil {
-			glog.V(2).Infof("AddBlock: setting confirming root %d to genesis block: %s", croot.id, blockID[:6])
+			glog.V(2).Infof("AddBlocks: setting confirming root %d to genesis block: %s", croot.id, blockID[:6])
 			c.confirmingRoot = croot
 		}
 
@@ -269,7 +271,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 			}
 		}
 		if badBlockNumber {
-			glog.V(1).Infof("AddBlock: leaving, incorrect block number relative to children of block %d:%s", blockNumber, blockID[:6])
+			glog.V(1).Infof("AddBlocks: leaving, incorrect block number relative to children of block %d:%s", blockNumber, blockID[:6])
 			return nil, blocks, nil
 		}
 		// Evaluate children against each other and eliminate unfavoarables.
@@ -280,7 +282,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 		children := make([]*block, 0)
 		if remainingOrphan != nil {
 			childCount = 1
-			glog.V(2).Infof("AddBlock: setting child branch to newly added root block %d:%s", blockNumber, blockID[:6])
+			glog.V(2).Infof("AddBlocks: setting child branch to newly added root block %d:%s", blockNumber, blockID[:6])
 			remainingOrphan.setRoot(cblock.root)
 			children = []*block{remainingOrphan}
 		}
@@ -303,13 +305,13 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 	// Eliminate new block if it was not favorable against siblings.
 	if favorableSibling == nil || favorableSibling.blockID != blockID {
 		if len(c.heads) == 0 {
-			glog.V(2).Infoln("AddBlock: no heads")
+			glog.V(2).Infoln("AddBlocks: no heads")
 		}
 		if addDisqualified {
 			metrics.AddBlock(specblock)
 			go metrics.DisqualifyBlock(specblock)
 		}
-		glog.V(1).Infof("AddBlock: leaving, sibling was more favorable than block %d:%s", blockNumber, blockID[:6])
+		glog.V(1).Infof("AddBlocks: leaving, sibling was more favorable than block %d:%s", blockNumber, blockID[:6])
 		return nil, blocks, nil
 	}
 
@@ -342,11 +344,11 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 	// By definition the new block replaces the parent as head,
 	// if it was one.
 	if c.heads[parentID] != nil {
-		glog.V(2).Infof("AddBlock: removing head, parent %s of block %d:%s", parentID[:6], blockNumber, blockID[:6])
+		glog.V(2).Infof("AddBlocks: removing head, parent %s of block %d:%s", parentID[:6], blockNumber, blockID[:6])
 		delete(c.heads, parentID)
 	}
 	if childCount == 0 {
-		glog.V(2).Infof("AddBlock: setting head block %d:%s", blockNumber, blockID[:6])
+		glog.V(2).Infof("AddBlocks: setting head block %d:%s", blockNumber, blockID[:6])
 		c.heads[blockID] = cblock
 	}
 
@@ -356,7 +358,7 @@ func (c *Consensus) AddBlocks(blocks []spec.Block, isLocal bool) (added spec.Blo
 	duration := time.Now().UnixNano() - startTime
 	metrics.BlockAddDuration(duration)
 
-	glog.V(1).Infof("AddBlock: leaving, success for block %d:%s", blockNumber, blockID[:6])
+	glog.V(1).Infof("AddBlocks: leaving, success for block %d:%s", blockNumber, blockID[:6])
 	return specblock, disqualified, nil
 }
 
