@@ -40,3 +40,22 @@ func (b *block) setRoot(croot *root) {
 		b.root = nil
 	}
 }
+
+func (b *block) branchHead() *block {
+	maxNum := b.blockNumber
+	maxBlock := b
+
+	if b.children == nil {
+		return b
+	}
+
+	for _, cchild := range b.children {
+		maxChild := cchild.branchHead()
+		maxChildNum := maxChild.blockNumber
+		if maxChildNum > maxNum {
+			maxNum = cchild.blockNumber
+			maxBlock = maxChild
+		}
+	}
+	return maxBlock
+}

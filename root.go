@@ -17,10 +17,11 @@ import (
 type root struct {
 	id                   int
 	cblock               *block
-	consecutiveLocalHits uint
+	consecutiveLocalHits int
 	lastHitTimestamp     int64
 	hitRate              *movavg.SMA // in blocks/sec
 	hits                 uint64
+	head                 *block
 }
 
 var rootID int
@@ -34,6 +35,11 @@ func newRoot(cblock *block) *root {
 	croot := &root{id: getRootID(), cblock: cblock}
 
 	return croot
+}
+
+func (r *root) setHead() {
+	chead := r.cblock.branchHead()
+	r.head = chead
 }
 
 func (r *root) recordHit(isLocal bool) {
